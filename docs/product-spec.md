@@ -1,7 +1,7 @@
 # Zmanim — Product Spec
 
 > Last updated: 2026-05-27
-> Status: Draft — under review
+> Status: Approved
 
 ---
 
@@ -42,6 +42,27 @@ Teachers access a read-only view of their own schedule.
 ---
 
 ## 4. Core Entities
+
+### 4.0 Schedule
+The top-level container. Multiple schedules can exist simultaneously — the admin can create, name, favourite, compare, and manage them independently.
+
+| Field | Notes |
+|---|---|
+| Name | Free text label (e.g. "Draft 1 — AS run", "Final v2") |
+| State | `draft` / `published` |
+| Starred/Favourite | Boolean — for quick access |
+| Created at | Timestamp |
+| Last modified | Timestamp |
+
+**States:**
+- **Draft** — a working or candidate schedule, editable, not surfaced as "the" schedule
+- **Published** — the active schedule. Surfaced prominently on the home page. Only one schedule can be published at a time. In a future milestone, the published schedule is what teachers see.
+
+The auto-scheduler always writes its output into a new draft (never overwrites an existing schedule). The admin can then review and optionally publish it.
+
+**Home page** shows all schedules in a list/grid, with the published one highlighted. Admin can create a blank draft, clone an existing one, or launch the auto-scheduler to generate a new one.
+
+
 
 ### 4.1 Teacher
 | Field | Notes |
@@ -119,7 +140,19 @@ The admin's core task is to place all lessons into time slots until the schedule
 - Violations are color-coded by restriction tier (see Section 6)
 - Admin can override any non-"Non-negotiable" restriction with a confirmation
 
-### 5.3 Auto-scheduler
+### 5.3 Review Mode
+After the auto-scheduler runs (or at any point the admin wants to formally evaluate a draft), the schedule enters **Review Mode** — a dedicated read-focused UI state.
+
+In Review Mode:
+- The admin can navigate all views (day table, teacher view, grade view, compact view) without accidentally editing
+- All restriction violations are surfaced in a structured summary (grouped by tier, with counts)
+- Each violation is clickable — jumps to the relevant slot in the schedule
+- The admin can choose to **enter Edit Mode** to manually adjust, then return to Review
+- When satisfied, the admin can **Publish** the schedule from Review Mode
+
+Review Mode is the natural landing state after the auto-scheduler completes.
+
+### 5.4 Auto-scheduler
 The auto-scheduler attempts to fill the schedule (or remaining empty slots) automatically.
 
 **Seed mode:** Admin can fix certain entries as immovable before running the auto-scheduler. Fixed entries act as hard anchors — the scheduler works around them.
