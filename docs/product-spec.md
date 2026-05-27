@@ -140,7 +140,7 @@ Restrictions are constraints on how the schedule can be built. They are entered 
 ### 6.1 Tiers
 | Tier | Meaning |
 |---|---|
-| **Non-negotiable** | Must never be broken. Violations block placement entirely in manual mode. In auto-scheduler, treated with extreme penalty. |
+| **Non-negotiable** | Should never be broken. Violations are surfaced as loud, prominent warnings — but the admin is never hard-blocked. In auto-scheduler, treated with extreme penalty. The admin can always proceed consciously. |
 | **Important** | Should not be broken. Violations are flagged prominently. Admin can override with confirmation. |
 | **Preferred** | Better to respect, but breakable without special friction. Flagged as a warning. |
 | **Flexible** | Nice to have. Noted in the schedule score but causes no UI friction. |
