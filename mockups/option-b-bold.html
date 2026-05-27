@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zmanim — Option B: Bold & Color-coded</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: #0F172A; color: #F1F5F9;
+  display: flex; height: 100vh; overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 210px; min-width: 210px;
+  background: #0B1120; border-right: 1px solid #1E293B;
+  display: flex; flex-direction: column;
+}
+.sidebar-logo {
+  padding: 18px 20px; border-bottom: 1px solid #1E293B;
+  font-size: 18px; font-weight: 800; color: #F8FAFC; letter-spacing: -0.02em;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.sidebar-logo .sub { font-size: 13px; color: #475569; font-weight: 400; }
+.sidebar-section { padding: 14px 0 4px; }
+.sidebar-label {
+  padding: 0 16px 6px; font-size: 10px; font-weight: 700;
+  color: #334155; text-transform: uppercase; letter-spacing: 0.1em;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 16px; font-size: 13px; color: #64748B; cursor: pointer;
+  transition: all 0.1s;
+}
+.nav-item:hover { color: #CBD5E1; background: #1E293B; }
+.nav-item.active { color: #F8FAFC; background: #1E293B; font-weight: 500; }
+.nav-icon { font-size: 14px; }
+
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* Topbar */
+.topbar {
+  background: #111827; border-bottom: 1px solid #1E293B;
+  padding: 0 24px; height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.topbar-title { font-size: 15px; font-weight: 600; color: #F1F5F9; }
+.badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 20px;
+}
+.badge-draft { background: #422006; color: #FCD34D; border: 1px solid #78350F; }
+.badge-published { background: #052E16; color: #4ADE80; border: 1px solid #14532D; }
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+.btn {
+  padding: 6px 13px; border-radius: 6px; font-size: 13px;
+  font-weight: 500; cursor: pointer; border: 1px solid transparent;
+}
+.btn-ghost { background: transparent; color: #94A3B8; border-color: #334155; }
+.btn-ghost:hover { border-color: #475569; color: #CBD5E1; }
+.btn-warn { background: #431407; color: #FCA5A5; border-color: #7F1D1D; }
+.btn-primary { background: #2563EB; color: #fff; border-color: #1D4ED8; }
+
+/* Day tabs */
+.day-tabs {
+  display: flex; padding: 0 24px;
+  background: #111827; border-bottom: 1px solid #1E293B;
+}
+.day-tab {
+  padding: 11px 18px; font-size: 13px; font-weight: 500;
+  color: #475569; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.day-tab.active { color: #60A5FA; border-bottom-color: #60A5FA; }
+.day-tab:hover:not(.active) { color: #94A3B8; }
+
+/* Violations bar */
+.violations-bar {
+  background: #1C0A00; border-bottom: 1px solid #431407;
+  padding: 7px 24px; display: flex; align-items: center; justify-content: space-between;
+  font-size: 12.5px; color: #FCA5A5; flex-shrink: 0;
+}
+.violations-bar a { color: #60A5FA; font-size: 12px; text-decoration: underline; cursor: pointer; }
+
+/* Schedule area */
+.schedule-area { flex: 1; overflow: auto; padding: 16px 24px; }
+
+table.grid { border-collapse: collapse; }
+table.grid th {
+  background: #1E293B; border: 1px solid #334155;
+  padding: 9px 10px; font-size: 11px; font-weight: 700;
+  color: #94A3B8; text-align: center; white-space: nowrap;
+  position: sticky; top: 0; z-index: 1; text-transform: uppercase; letter-spacing: 0.05em;
+}
+table.grid th.t { width: 72px; min-width: 72px; position: sticky; left: 0; z-index: 2; background: #1E293B; }
+table.grid td { border: 1px solid #1E293B; padding: 3px; vertical-align: top; width: 110px; min-width: 110px; background: #111827; }
+table.grid td.t {
+  background: #1E293B; text-align: center; font-size: 11px; color: #64748B;
+  font-weight: 600; vertical-align: middle; position: sticky; left: 0; z-index: 1; padding: 6px 4px;
+}
+table.grid tr.recess td {
+  background: #0B1120; height: 22px; font-size: 10.5px; color: #334155;
+  text-align: center; vertical-align: middle;
+}
+table.grid tr.recess td.t { color: #334155; }
+
+/* Colored cells — subject fills the whole card */
+.card {
+  border-radius: 4px; padding: 7px 8px; min-height: 64px;
+  cursor: grab; transition: opacity 0.1s; position: relative;
+}
+.card:hover { opacity: 0.9; }
+.card-sub { font-size: 12.5px; font-weight: 700; color: #fff; direction: rtl; text-align: right; line-height: 1.3; }
+.card-teacher { font-size: 11px; color: rgba(255,255,255,0.7); direction: rtl; text-align: right; margin-top: 3px; }
+.card-tag {
+  font-size: 9px; background: rgba(255,255,255,0.2); color: #fff;
+  padding: 1px 5px; border-radius: 3px; display: inline-block; margin-top: 4px; direction: rtl;
+}
+.warn-badge {
+  position: absolute; top: 5px; left: 5px;
+  background: #FEF08A; color: #854D0E;
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px;
+}
+
+.empty {
+  min-height: 64px; border: 1.5px dashed #1E293B; border-radius: 4px;
+  background: #0F172A; display: flex; align-items: center; justify-content: center;
+  color: #1E293B; font-size: 18px; cursor: pointer; transition: all 0.15s;
+}
+.empty:hover { border-color: #3B82F6; color: #3B82F6; background: #0F1F3D; }
+
+/* Grade header */
+table.grid th.grade-header {
+  background: #0B1120; font-size: 9.5px; font-weight: 700;
+  color: #334155; border-bottom: none; padding: 4px 10px;
+}
+
+/* Subject colors */
+.math    { background: #312E81; }
+.english { background: #065F46; }
+.lit     { background: #831843; }
+.history { background: #78350F; }
+.physics { background: #1E3A8A; }
+.chem    { background: #4C1D95; }
+.bio     { background: #14532D; }
+.art     { background: #7F1D1D; }
+.sport   { background: #365314; }
+.civics  { background: #0C4A6E; }
+.geo     { background: #134E4A; }
+
+/* Subject legend */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 24px;
+  background: #0B1120; border-top: 1px solid #1E293B; flex-shrink: 0;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #64748B; }
+.legend-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+/* Progress bar */
+.progress-bar {
+  background: #0B1120; border-bottom: 1px solid #1E293B;
+  padding: 8px 24px; display: flex; align-items: center; gap: 20px; flex-shrink: 0;
+}
+.progress-stat { font-size: 12px; color: #64748B; }
+.progress-stat strong { color: #F1F5F9; font-size: 14px; font-weight: 700; }
+.progress-track {
+  flex: 1; height: 4px; background: #1E293B; border-radius: 2px; max-width: 200px;
+}
+.progress-fill { height: 100%; background: #22C55E; border-radius: 2px; width: 62%; }
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="sidebar-logo">Zmanim <span class="sub">זמנים</span></div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Schedules</div>
+    <div class="nav-item active"><span class="nav-icon">📅</span> All Schedules</div>
+    <div class="nav-item"><span class="nav-icon">⚡</span> Auto-Scheduler</div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Definitions</div>
+    <div class="nav-item"><span class="nav-icon">👤</span> Teachers</div>
+    <div class="nav-item"><span class="nav-icon">🚪</span> Rooms</div>
+    <div class="nav-item"><span class="nav-icon">📚</span> Subjects</div>
+    <div class="nav-item"><span class="nav-icon">📋</span> Lessons</div>
+    <div class="nav-item"><span class="nav-icon">⛔</span> Restrictions</div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Views</div>
+    <div class="nav-item"><span class="nav-icon">👤</span> By Teacher</div>
+    <div class="nav-item"><span class="nav-icon">🎓</span> By Grade</div>
+    <div class="nav-item"><span class="nav-icon">🗜️</span> Compact View</div>
+  </div>
+</nav>
+
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="topbar-title">2025–2026 — Draft 1</span>
+      <span class="badge badge-draft">Draft</span>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-warn">⚠ 3 Warnings</button>
+      <button class="btn btn-ghost">Review Mode</button>
+      <button class="btn btn-ghost">Clone</button>
+      <button class="btn btn-primary">Publish →</button>
+    </div>
+  </div>
+
+  <div class="day-tabs">
+    <div class="day-tab active">Sunday</div>
+    <div class="day-tab">Monday</div>
+    <div class="day-tab">Tuesday</div>
+    <div class="day-tab">Wednesday</div>
+    <div class="day-tab">Thursday</div>
+  </div>
+
+  <div class="progress-bar">
+    <div class="progress-stat"><strong>37</strong> / 60 lessons placed</div>
+    <div class="progress-track"><div class="progress-fill"></div></div>
+    <div class="progress-stat">62%</div>
+    <div style="margin-left:auto;font-size:12px;color:#F87171">⚠ 1 non-negotiable &nbsp; ⚡ 2 important</div>
+  </div>
+
+  <div class="schedule-area">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="t"></th>
+          <th colspan="2" class="grade-header">Grade 7</th>
+          <th colspan="2" class="grade-header">Grade 8</th>
+          <th colspan="2" class="grade-header">Grade 9</th>
+          <th colspan="2" class="grade-header">Grade 10</th>
+          <th colspan="2" class="grade-header">Grade 11</th>
+          <th colspan="2" class="grade-header">Grade 12</th>
+        </tr>
+        <tr>
+          <th class="t">Time</th>
+          <th>7A</th><th>7B</th>
+          <th>8A</th><th>8B</th>
+          <th>9A</th><th>9B</th>
+          <th>10A</th><th>10B</th>
+          <th>11A</th><th>11B</th>
+          <th>12A</th><th>12B</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="t">08:00<br>09:15</td>
+          <td><div class="card math"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card english"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td colspan="2"><div class="card bio"><div class="card-sub">ביולוגיה</div><div class="card-teacher">מזרחי</div><span class="card-tag">שיתוף 8A+8B</span></div></td>
+          <td><div class="card history"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card lit"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card physics" style="position:relative"><div class="warn-badge">⚠ NON-NEG</div><div class="card-sub">פיזיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card chem"><div class="card-sub">כימיה</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card english"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="empty">+</div></td>
+        </tr>
+        <tr class="recess"><td class="t">09:15</td><td colspan="12">— Recess  15 min —</td></tr>
+        <tr>
+          <td class="t">09:30<br>10:45</td>
+          <td><div class="card lit"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card math"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card civics"><div class="card-sub">אזרחות</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card english"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td colspan="2"><div class="card math"><div class="card-sub">מתמטיקה (5 נק׳)</div><div class="card-teacher">מזרחי</div><span class="card-tag">קבוצת רמה</span></div></td>
+          <td><div class="card history"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card english"><div class="card-sub">אנגלית</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card physics"><div class="card-sub">פיזיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card chem"><div class="card-sub">כימיה</div><div class="card-teacher">אברהם</div></div></td>
+        </tr>
+        <tr class="recess"><td class="t">10:45</td><td colspan="12">— Recess  20 min —</td></tr>
+        <tr>
+          <td class="t">11:05<br>12:20</td>
+          <td><div class="card english"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card math"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card art"><div class="card-sub">אמנות</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="card civics" style="position:relative"><div class="warn-badge">⚠ WINDOW</div><div class="card-sub">אזרחות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card history"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="card geo"><div class="card-sub">גיאוגרפיה</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card math"><div class="card-sub">מתמטיקה</div><div class="card-teacher">מזרחי</div></div></td>
+          <td><div class="card lit"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card civics"><div class="card-sub">אזרחות</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="card english"><div class="card-sub">אנגלית</div><div class="card-teacher">שפירא</div></div></td>
+        </tr>
+        <tr class="recess"><td class="t">12:20</td><td colspan="12">— Recess  10 min —</td></tr>
+        <tr>
+          <td class="t">12:30<br>13:45</td>
+          <td><div class="card geo"><div class="card-sub">גיאוגרפיה</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card art"><div class="card-sub">אמנות</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card history"><div class="card-sub">היסטוריה</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card sport"><div class="card-sub">ספורט</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="card sport"><div class="card-sub">ספורט</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="card lit"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card civics"><div class="card-sub">אזרחות</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card math"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card history"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="legend">
+    <span style="font-size:10px;color:#334155;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-right:4px">Subjects</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#312E81"></div>מתמטיקה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#065F46"></div>אנגלית</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#831843"></div>ספרות</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#78350F"></div>היסטוריה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1E3A8A"></div>פיזיקה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4C1D95"></div>כימיה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#14532D"></div>ביולוגיה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7F1D1D"></div>אמנות</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#365314"></div>ספורט</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0C4A6E"></div>אזרחות</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#134E4A"></div>גיאוגרפיה</div>
+  </div>
+</div>
+
+</body>
+</html>

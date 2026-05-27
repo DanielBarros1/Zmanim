@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zmanim — Design Candidate</title>
+<style>
+/* ── Color tokens ──────────────────────────────────────────── */
+:root {
+  --bg:           #F8FAFC;
+  --surface:      #FFFFFF;
+  --surface-2:    #F1F5F9;
+  --border:       #E2E8F0;
+  --text-1:       #1E293B;
+  --text-2:       #475569;
+  --text-3:       #94A3B8;
+  --accent:       #2563EB;
+  --accent-bg:    #EFF6FF;
+  --accent-text:  #1D4ED8;
+  --warn-bg:      #FFFBEB;
+  --warn-border:  #FDE68A;
+  --warn-text:    #92400E;
+  --warn-badge:   #FEF3C7;
+  --ok-bg:        #F0FDF4;
+  --ok-border:    #BBF7D0;
+  --ok-text:      #15803D;
+  --card-bg:      #FFFFFF;
+  --card-shadow:  0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+  --empty-bg:     #FAFAFA;
+  --empty-border: #E2E8F0;
+  --empty-hover-bg:     #EFF6FF;
+  --empty-hover-border: #93C5FD;
+  --empty-hover-color:  #3B82F6;
+  --recess-bg:    #F8FAFC;
+  --recess-text:  #94A3B8;
+}
+[data-theme="dark"] {
+  --bg:           #0F172A;
+  --surface:      #1E293B;
+  --surface-2:    #162032;
+  --border:       #334155;
+  --text-1:       #F1F5F9;
+  --text-2:       #94A3B8;
+  --text-3:       #475569;
+  --accent:       #3B82F6;
+  --accent-bg:    #172554;
+  --accent-text:  #93C5FD;
+  --warn-bg:      #1C1408;
+  --warn-border:  #78350F;
+  --warn-text:    #FCD34D;
+  --warn-badge:   #431407;
+  --ok-bg:        #052E16;
+  --ok-border:    #14532D;
+  --ok-text:      #4ADE80;
+  --card-bg:      #1E293B;
+  --card-shadow:  0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --empty-bg:     #162032;
+  --empty-border: #334155;
+  --empty-hover-bg:     #172554;
+  --empty-hover-border: #3B82F6;
+  --empty-hover-color:  #60A5FA;
+  --recess-bg:    #0B1120;
+  --recess-text:  #334155;
+}
+
+/* ── Reset ─────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg); color: var(--text-1);
+  display: flex; height: 100vh; overflow: hidden;
+  transition: background 0.2s, color 0.2s;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────── */
+.sidebar {
+  width: 220px; min-width: 220px;
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  transition: background 0.2s, border-color 0.2s;
+}
+.sidebar-logo {
+  padding: 18px 20px; border-bottom: 1px solid var(--border);
+  font-size: 18px; font-weight: 700; color: var(--text-1);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.sidebar-logo .sub { font-size: 12px; color: var(--text-3); font-weight: 400; }
+.sidebar-section { padding: 16px 0 4px; }
+.sidebar-label {
+  padding: 0 16px 6px; font-size: 10px; font-weight: 700;
+  color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 16px; font-size: 13.5px; color: var(--text-2); cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text-1); }
+.nav-item.active { background: var(--accent-bg); color: var(--accent); font-weight: 500; }
+.nav-icon { font-size: 14px; }
+
+/* ── Main ──────────────────────────────────────────────────── */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Topbar ────────────────────────────────────────────────── */
+.topbar {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 24px; height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0; transition: background 0.2s, border-color 0.2s;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.topbar-title { font-size: 15px; font-weight: 600; color: var(--text-1); }
+.badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 20px; letter-spacing: 0.02em;
+}
+.badge-draft { background: var(--warn-badge); color: var(--warn-text); }
+.badge-published { background: var(--ok-bg); color: var(--ok-text); }
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+.btn {
+  padding: 6px 13px; border-radius: 6px; font-size: 13px;
+  font-weight: 500; cursor: pointer; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2);
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.btn:hover { background: var(--surface-2); color: var(--text-1); }
+.btn-warn { background: var(--warn-bg); color: var(--warn-text); border-color: var(--warn-border); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { opacity: 0.9; background: var(--accent); }
+.btn-icon {
+  padding: 6px 10px; font-size: 15px; line-height: 1;
+  border-radius: 6px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2);
+}
+
+/* ── Stats bar ─────────────────────────────────────────────── */
+.stats-bar {
+  display: flex; gap: 12px; padding: 10px 24px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  flex-shrink: 0; transition: background 0.2s, border-color 0.2s;
+}
+.stat {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 14px; flex: 1;
+  transition: background 0.2s, border-color 0.2s;
+}
+.stat.warn { background: var(--warn-bg); border-color: var(--warn-border); }
+.stat.ok   { background: var(--ok-bg); border-color: var(--ok-border); }
+.stat-icon { font-size: 18px; }
+.stat-label { font-size: 10.5px; color: var(--text-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-val { font-size: 17px; font-weight: 800; color: var(--text-1); line-height: 1.1; }
+.stat.warn .stat-val { color: var(--warn-text); }
+.stat.ok   .stat-val { color: var(--ok-text); }
+.progress-wrap { flex: 1; display: flex; align-items: center; gap: 8px; }
+.progress-track { flex: 1; height: 5px; background: var(--border); border-radius: 3px; max-width: 80px; }
+.progress-fill  { height: 100%; background: var(--accent); border-radius: 3px; width: 62%; transition: width 0.3s; }
+
+/* ── Day tabs ──────────────────────────────────────────────── */
+.day-tabs {
+  display: flex; padding: 0 24px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  flex-shrink: 0; transition: background 0.2s, border-color 0.2s;
+}
+.day-tab {
+  padding: 11px 18px; font-size: 13.5px; font-weight: 500;
+  color: var(--text-3); cursor: pointer; border-bottom: 2px solid transparent;
+  transition: color 0.1s, border-color 0.1s;
+}
+.day-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.day-tab:hover:not(.active) { color: var(--text-1); }
+
+/* ── Violations banner ─────────────────────────────────────── */
+.violations-bar {
+  background: var(--warn-bg); border-bottom: 1px solid var(--warn-border);
+  padding: 7px 24px; display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; color: var(--warn-text); flex-shrink: 0;
+}
+.violations-bar a { color: var(--accent); font-size: 12px; text-decoration: underline; cursor: pointer; }
+
+/* ── Schedule area ─────────────────────────────────────────── */
+.schedule-area { flex: 1; overflow: auto; padding: 16px 24px; }
+
+table.grid { border-collapse: collapse; }
+
+table.grid th {
+  background: var(--surface-2); border: 1px solid var(--border);
+  padding: 9px 10px; font-size: 11px; font-weight: 700;
+  color: var(--text-3); text-align: center; white-space: nowrap;
+  position: sticky; top: 0; z-index: 1;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  transition: background 0.2s, border-color 0.2s;
+}
+table.grid th.t {
+  width: 72px; min-width: 72px;
+  position: sticky; left: 0; z-index: 2;
+  background: var(--surface-2);
+}
+table.grid th.grade-hdr {
+  font-size: 9.5px; font-weight: 700; color: var(--text-3);
+  border-bottom: none; padding: 4px 10px; background: var(--bg);
+}
+
+table.grid td {
+  border: 1px solid var(--border); padding: 4px;
+  vertical-align: top; width: 112px; min-width: 112px;
+  transition: border-color 0.2s;
+}
+table.grid td.t {
+  background: var(--surface-2); text-align: center;
+  font-size: 11px; color: var(--text-3); font-weight: 600;
+  vertical-align: middle; position: sticky; left: 0; z-index: 1; padding: 6px 4px;
+  transition: background 0.2s;
+}
+table.grid tr.recess td {
+  background: var(--recess-bg); height: 24px;
+  font-size: 11px; color: var(--recess-text);
+  text-align: center; vertical-align: middle; font-style: italic;
+  transition: background 0.2s;
+}
+table.grid tr.recess td.t { font-style: normal; font-size: 10px; }
+
+/* ── Lesson cards ──────────────────────────────────────────── */
+.card {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-left: 3px solid #3B82F6;
+  border-radius: 5px; padding: 6px 8px; min-height: 64px;
+  cursor: grab; box-shadow: var(--card-shadow);
+  transition: box-shadow 0.1s, background 0.2s, border-color 0.2s;
+}
+.card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.card.warn  { border-left-color: #F59E0B; background: var(--warn-bg); }
+.card.shared { border-left-color: #8B5CF6; }
+
+.card-sub {
+  font-size: 12.5px; font-weight: 700; color: var(--text-1);
+  direction: rtl; text-align: right; line-height: 1.3;
+}
+.card-teacher {
+  font-size: 11px; color: var(--text-3);
+  direction: rtl; text-align: right; margin-top: 3px;
+}
+.card-tags { display: flex; gap: 4px; margin-top: 4px; justify-content: flex-end; flex-wrap: wrap; }
+.tag {
+  font-size: 9.5px; font-weight: 600; padding: 1px 6px;
+  border-radius: 20px; direction: rtl;
+}
+.tag-shared { background: #EDE9FE; color: #6D28D9; }
+.tag-math   { background: #EEF2FF; color: #4338CA; }
+.tag-warn   { background: var(--warn-badge); color: var(--warn-text); }
+
+[data-theme="dark"] .tag-shared { background: #2E1065; color: #C4B5FD; }
+[data-theme="dark"] .tag-math   { background: #1E1B4B; color: #A5B4FC; }
+
+.empty {
+  min-height: 64px; border: 1.5px dashed var(--empty-border);
+  border-radius: 5px; background: var(--empty-bg);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--empty-border); font-size: 18px; cursor: pointer;
+  transition: all 0.15s;
+}
+.empty:hover {
+  border-color: var(--empty-hover-border);
+  color: var(--empty-hover-color);
+  background: var(--empty-hover-bg);
+}
+
+/* ── Legend ────────────────────────────────────────────────── */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 24px;
+  background: var(--surface); border-top: 1px solid var(--border);
+  flex-shrink: 0; transition: background 0.2s, border-color 0.2s;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
+.legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-logo">Zmanim <span class="sub">זמנים</span></div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Schedules</div>
+    <div class="nav-item active"><span class="nav-icon">📅</span> All Schedules</div>
+    <div class="nav-item"><span class="nav-icon">⚡</span> Auto-Scheduler</div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Definitions</div>
+    <div class="nav-item"><span class="nav-icon">👤</span> Teachers</div>
+    <div class="nav-item"><span class="nav-icon">🚪</span> Rooms</div>
+    <div class="nav-item"><span class="nav-icon">📚</span> Subjects</div>
+    <div class="nav-item"><span class="nav-icon">📋</span> Lessons</div>
+    <div class="nav-item"><span class="nav-icon">⛔</span> Restrictions</div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Views</div>
+    <div class="nav-item"><span class="nav-icon">👤</span> By Teacher</div>
+    <div class="nav-item"><span class="nav-icon">🎓</span> By Grade</div>
+    <div class="nav-item"><span class="nav-icon">🗜️</span> Compact View</div>
+  </div>
+</nav>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="topbar-title">2025–2026 — Draft 1</span>
+      <span class="badge badge-draft">Draft</span>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-warn">⚠ 3 Warnings</button>
+      <button class="btn">Review Mode</button>
+      <button class="btn">Clone</button>
+      <button class="btn btn-primary">Publish →</button>
+      <button class="btn-icon" onclick="toggleTheme()" title="Toggle dark mode">🌙</button>
+    </div>
+  </div>
+
+  <!-- Stats bar -->
+  <div class="stats-bar">
+    <div class="stat">
+      <span class="stat-icon">📋</span>
+      <div>
+        <div class="stat-label">Lessons Placed</div>
+        <div class="stat-val">37 <span style="font-size:12px;font-weight:500;color:var(--text-3)">/ 60</span></div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-track"><div class="progress-fill"></div></div>
+        <span style="font-size:11px;color:var(--text-3);font-weight:600">62%</span>
+      </div>
+    </div>
+    <div class="stat warn">
+      <span class="stat-icon">⚠️</span>
+      <div>
+        <div class="stat-label">Violations</div>
+        <div class="stat-val">3</div>
+      </div>
+    </div>
+    <div class="stat">
+      <span class="stat-icon">👤</span>
+      <div>
+        <div class="stat-label">Teachers</div>
+        <div class="stat-val">18</div>
+      </div>
+    </div>
+    <div class="stat ok">
+      <span class="stat-icon">✅</span>
+      <div>
+        <div class="stat-label">Constraints OK</div>
+        <div class="stat-val">142</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day tabs -->
+  <div class="day-tabs">
+    <div class="day-tab active">Sunday</div>
+    <div class="day-tab">Monday</div>
+    <div class="day-tab">Tuesday</div>
+    <div class="day-tab">Wednesday</div>
+    <div class="day-tab">Thursday</div>
+  </div>
+
+  <!-- Violations banner -->
+  <div class="violations-bar">
+    <span>⚠️ <strong>3 violations</strong> — 1 Non-negotiable · 2 Important</span>
+    <a>View all violations →</a>
+  </div>
+
+  <!-- Grid -->
+  <div class="schedule-area">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="t"></th>
+          <th colspan="2" class="grade-hdr">Grade 7</th>
+          <th colspan="2" class="grade-hdr">Grade 8</th>
+          <th colspan="2" class="grade-hdr">Grade 9</th>
+          <th colspan="2" class="grade-hdr">Grade 10</th>
+          <th colspan="2" class="grade-hdr">Grade 11</th>
+          <th colspan="2" class="grade-hdr">Grade 12</th>
+        </tr>
+        <tr>
+          <th class="t">Time</th>
+          <th>7A</th><th>7B</th>
+          <th>8A</th><th>8B</th>
+          <th>9A</th><th>9B</th>
+          <th>10A</th><th>10B</th>
+          <th>11A</th><th>11B</th>
+          <th>12A</th><th>12B</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Lesson 1 -->
+        <tr>
+          <td class="t">08:00<br>09:15</td>
+          <td><div class="card" style="border-left-color:#4F46E5"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div><div class="card-tags"><span class="tag tag-math">4 נק׳</span></div></div></td>
+          <td><div class="card" style="border-left-color:#059669"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td colspan="2"><div class="card shared"><div class="card-sub">ביולוגיה</div><div class="card-teacher">מזרחי</div><div class="card-tags"><span class="tag tag-shared">שיתוף 8A+8B</span></div></div></td>
+          <td><div class="card" style="border-left-color:#D97706"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#DB2777"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card warn"><div class="card-sub">פיזיקה</div><div class="card-teacher">כהן</div><div class="card-tags"><span class="tag tag-warn">⚠ Teacher conflict</span></div></div></td>
+          <td><div class="card" style="border-left-color:#7C3AED"><div class="card-sub">כימיה</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card" style="border-left-color:#059669"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="empty">+</div></td>
+        </tr>
+        <!-- Recess 1 -->
+        <tr class="recess"><td class="t">09:15</td><td colspan="12">— Recess  15 min —</td></tr>
+        <!-- Lesson 2 -->
+        <tr>
+          <td class="t">09:30<br>10:45</td>
+          <td><div class="card" style="border-left-color:#DB2777"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card" style="border-left-color:#4F46E5"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card" style="border-left-color:#0369A1"><div class="card-sub">אזרחות</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card" style="border-left-color:#059669"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td colspan="2"><div class="card shared"><div class="card-sub">מתמטיקה (5 נק׳)</div><div class="card-teacher">מזרחי</div><div class="card-tags"><span class="tag tag-shared">קבוצת רמה</span><span class="tag tag-math">5 נק׳</span></div></div></td>
+          <td><div class="card" style="border-left-color:#D97706"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#059669"><div class="card-sub">אנגלית</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card" style="border-left-color:#1D4ED8"><div class="card-sub">פיזיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card" style="border-left-color:#7C3AED"><div class="card-sub">כימיה</div><div class="card-teacher">אברהם</div></div></td>
+        </tr>
+        <!-- Recess 2 -->
+        <tr class="recess"><td class="t">10:45</td><td colspan="12">— Recess  20 min —</td></tr>
+        <!-- Lesson 3 -->
+        <tr>
+          <td class="t">11:05<br>12:20</td>
+          <td><div class="card" style="border-left-color:#059669"><div class="card-sub">אנגלית</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#4F46E5"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="card" style="border-left-color:#DC2626"><div class="card-sub">אמנות</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="card warn"><div class="card-sub">אזרחות</div><div class="card-teacher">שפירא</div><div class="card-tags"><span class="tag tag-warn">⚠ Window — grade 9</span></div></div></td>
+          <td><div class="card" style="border-left-color:#D97706"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="card" style="border-left-color:#0F766E"><div class="card-sub">גיאוגרפיה</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card" style="border-left-color:#4F46E5"><div class="card-sub">מתמטיקה</div><div class="card-teacher">מזרחי</div></div></td>
+          <td><div class="card" style="border-left-color:#DB2777"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#0369A1"><div class="card-sub">אזרחות</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="card" style="border-left-color:#059669"><div class="card-sub">אנגלית</div><div class="card-teacher">שפירא</div></div></td>
+        </tr>
+        <!-- Recess 3 -->
+        <tr class="recess"><td class="t">12:20</td><td colspan="12">— Recess  10 min —</td></tr>
+        <!-- Lesson 4 -->
+        <tr>
+          <td class="t">12:30<br>13:45</td>
+          <td><div class="card" style="border-left-color:#0F766E"><div class="card-sub">גיאוגרפיה</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="card" style="border-left-color:#DC2626"><div class="card-sub">אמנות</div><div class="card-teacher">פרץ</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#D97706"><div class="card-sub">היסטוריה</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card" style="border-left-color:#65A30D"><div class="card-sub">ספורט</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="card" style="border-left-color:#65A30D"><div class="card-sub">ספורט</div><div class="card-teacher">לוי</div></div></td>
+          <td><div class="card" style="border-left-color:#DB2777"><div class="card-sub">ספרות</div><div class="card-teacher">שפירא</div></div></td>
+          <td><div class="card" style="border-left-color:#0369A1"><div class="card-sub">אזרחות</div><div class="card-teacher">אברהם</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#4F46E5"><div class="card-sub">מתמטיקה</div><div class="card-teacher">כהן</div></div></td>
+          <td><div class="empty">+</div></td>
+          <td><div class="card" style="border-left-color:#D97706"><div class="card-sub">היסטוריה</div><div class="card-teacher">פרץ</div></div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <span style="font-size:10px;color:var(--text-3);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-right:4px">Subjects</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#4F46E5"></div>מתמטיקה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#059669"></div>אנגלית</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#DB2777"></div>ספרות</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#D97706"></div>היסטוריה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1D4ED8"></div>פיזיקה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7C3AED"></div>כימיה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#15803D"></div>ביולוגיה</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#DC2626"></div>אמנות</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#65A30D"></div>ספורט</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0369A1"></div>אזרחות</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0F766E"></div>גיאוגרפיה</div>
+    <span style="margin-left:8px;font-size:10px;color:var(--text-3);font-weight:700;letter-spacing:0.06em;text-transform:uppercase">Tags</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#8B5CF6"></div>↔ Shared</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#FDE68A"></div>⚠ Violation</div>
+  </div>
+</div>
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement;
+  const btn = document.querySelector('.btn-icon');
+  if (html.getAttribute('data-theme') === 'light') {
+    html.setAttribute('data-theme', 'dark');
+    btn.textContent = '☀️';
+  } else {
+    html.setAttribute('data-theme', 'light');
+    btn.textContent = '🌙';
+  }
+}
+</script>
+</body>
+</html>
