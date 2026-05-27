@@ -25,6 +25,7 @@ import { Input } from '../components/ui/Input'
 import { EmptyState } from '../components/ui/EmptyState'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { Spinner } from '../components/ui/Spinner'
+import { AutoSchedulerModal } from '../components/schedule/AutoSchedulerModal'
 import {
   useSchedules,
   useCreateSchedule,
@@ -199,6 +200,7 @@ export function HomePage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [asOpen, setAsOpen] = useState(false)
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -236,6 +238,7 @@ export function HomePage() {
     <AppShell
       title="Schedules"
       actions={
+        <Button variant="secondary" onClick={() => setAsOpen(true)}>⚙ Auto-Schedule</Button>
         <Button onClick={() => setCreateOpen(true)}>+ New Schedule</Button>
       }
     >
@@ -312,6 +315,9 @@ export function HomePage() {
         danger
         loading={deleteSchedule.isPending}
       />
+
+      {/* Auto-scheduler modal */}
+      <AutoSchedulerModal open={asOpen} onClose={() => setAsOpen(false)} />
     </AppShell>
   )
 }
