@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/* ── Zmanim Design Tokens ──────────────────────────────────────
+   CSS custom properties are the single source of truth for colors.
+   Dark mode is toggled by setting data-theme="dark" on <html>.
+   See design-spec.md for full color rationale.
+─────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg:           #F8FAFC;
+  --surface:      #FFFFFF;
+  --surface-2:    #F1F5F9;
+  --border:       #E2E8F0;
+  --text-1:       #1E293B;
+  --text-2:       #475569;
+  --text-3:       #94A3B8;
+  --accent:       #2563EB;
+  --accent-bg:    #EFF6FF;
+  --accent-text:  #1D4ED8;
+  --warn-bg:      #FFFBEB;
+  --warn-border:  #FDE68A;
+  --warn-text:    #92400E;
+  --warn-badge:   #FEF3C7;
+  --ok-bg:        #F0FDF4;
+  --ok-border:    #BBF7D0;
+  --ok-text:      #15803D;
+  --card-bg:      #FFFFFF;
+  --card-shadow:  0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+  --empty-bg:     #FAFAFA;
+  --empty-border: #E2E8F0;
+  --recess-bg:    #F8FAFC;
+  --recess-text:  #94A3B8;
+}
+
+[data-theme="dark"] {
+  --bg:           #0F172A;
+  --surface:      #1E293B;
+  --surface-2:    #162032;
+  --border:       #334155;
+  --text-1:       #F1F5F9;
+  --text-2:       #94A3B8;
+  --text-3:       #475569;
+  --accent:       #3B82F6;
+  --accent-bg:    #172554;
+  --accent-text:  #93C5FD;
+  --warn-bg:      #1C1408;
+  --warn-border:  #78350F;
+  --warn-text:    #FCD34D;
+  --warn-badge:   #431407;
+  --ok-bg:        #052E16;
+  --ok-border:    #14532D;
+  --ok-text:      #4ADE80;
+  --card-bg:      #1E293B;
+  --card-shadow:  0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.2);
+  --empty-bg:     #162032;
+  --empty-border: #334155;
+  --recess-bg:    #0B1120;
+  --recess-text:  #334155;
+}
+
+/* ── Subject colors ─────────────────────────────────────────────
+   Fixed accent colors for lesson card left-border stripes.
+   See design-spec.md §3 for the full palette.
+─────────────────────────────────────────────────────────────── */
+:root {
+  --subject-math:       #4F46E5;
+  --subject-english:    #059669;
+  --subject-literature: #DB2777;
+  --subject-history:    #D97706;
+  --subject-physics:    #1D4ED8;
+  --subject-chemistry:  #7C3AED;
+  --subject-biology:    #15803D;
+  --subject-art:        #DC2626;
+  --subject-sport:      #65A30D;
+  --subject-civics:     #0369A1;
+  --subject-geography:  #0F766E;
+  --subject-bible:      #C2410C;
+  --subject-computers:  #0891B2;
+}
+
+/* ── Base ────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  background-color: var(--bg);
+  color: var(--text-1);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  margin: 0;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+}
+
+/* Hebrew content: RTL within LTR grid layout */
+.hebrew {
+  direction: rtl;
+  text-align: right;
+}
