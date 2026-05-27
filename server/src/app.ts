@@ -20,7 +20,7 @@ import { configRouter } from './routes/config'
 import { subjectsRouter } from './routes/subjects'
 import { roomsRouter } from './routes/rooms'
 import { teachersRouter } from './routes/teachers'
-import { gradesRouter } from './routes/grades'
+import { gradesRouter, classesRouter } from './routes/grades'
 import { lessonsRouter } from './routes/lessons'
 import { restrictionsRouter } from './routes/restrictions'
 import { schedulesRouter } from './routes/schedules'
@@ -70,6 +70,7 @@ app.use('/api/subjects', subjectsRouter)
 app.use('/api/rooms', roomsRouter)
 app.use('/api/teachers', teachersRouter)
 app.use('/api/grades', gradesRouter)
+app.use('/api/classes', classesRouter)
 app.use('/api/lessons', lessonsRouter)
 app.use('/api/restrictions', restrictionsRouter)
 app.use('/api/schedules', schedulesRouter)
