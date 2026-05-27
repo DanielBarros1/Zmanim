@@ -56,3 +56,66 @@ Three read-only views: Teacher View (5-day grid for one teacher), Grade View (5-
 
 ### Auth flow
 `useCurrentUser()` hits `/auth/me` (not `/api/me` — the auth routes live under `/auth`). Returns null (not 401) from the hook so React components can handle the unauthenticated state gracefully without error boundaries.
+
+---
+
+## 2026-05-28 — Phase 7: Review Mode Polish
+
+### Bug fixes found during Phase 7 implementation
+
+**`GET /api/schedules/:id/entries` was missing.**
+The `entriesRouter` had POST / PATCH / DELETE for entries but no GET. The client's `useEntries()` hook called this endpoint and got 404. Fixed by adding `GET /:id/entries` to `server/src/routes/entries.ts` (reads directly from `prisma.scheduleEntry.findMany`).
+
+**`useUpdateSchedule` used PUT, server uses PATCH.**
+The server's update route is `schedulesRouter.patch(...)`. The client called `apiClient.put(...)`. Express doesn't route PUT to a PATCH handler — silent 404. Fixed client to use `apiClient.patch(...)`.
+
+**`useMoveEntry` also used PUT, server uses PATCH.**
+Same issue — entries move route is `entriesRouter.patch('/:id/entries/:entryId', ...)`. Fixed client to use `apiClient.patch(...)`.
+
+### Evaluation state — moved from local useState to React Query cache
+
+Originally, `ScheduleEditorPage` held evaluation in a `useState` that was updated in a `handlePlacementResult` callback after every mutation. This meant that:
+- On first load, evaluation was null (no violations shown) until a placement was made
+- After `useRemoveEntry`, evaluation was never updated (stale)
+
+**New approach:** Added `GET /api/schedules/:id/evaluate` server endpoint. Client has `useEvaluation(scheduleId)` hook. All three mutation hooks (`usePlaceEntry`, `useMoveEntry`, `useRemoveEntry`) now write the server's returned `EvaluationResult` directly into the query cache via `qc.setQueryData(evaluationKey, result.evaluation)`. The page component uses `useEvaluation()` as its single reactive source of truth — no `useState` needed.
+
+### Review Mode auto-open violations panel
+When `isReviewMode` becomes true (after AS redirect or manual toggle), a `useEffect` in `ScheduleEditorPage` immediately sets `showViolationPanel = true`. This gives the user an immediate view of what the AS produced.
+
+### Violation → cell scroll flow
+When the user clicks "Highlight N affected lessons" in `ViolationPanel`, three things happen via the Zustand store and React effects:
+1. `setHighlightedEntryIds(ids)` — LessonCards glow (already done in Phase 4)
+2. `useEffect` in `ScheduleEditorPage` watches `highlightedEntryIds` and switches `activeDay` to the day of the first affected entry
+3. `useEffect` in `ScheduleGrid` watches `highlightedEntryIds` and uses `document.querySelector('[data-entry-id="..."]')` + `scrollIntoView` with a 200 ms delay (gives React time to re-render the new day before querying the DOM)
+
+### Publish flow in editor (Review Mode)
+The Publish button is now surfaced prominently in the editor's topbar when in Review Mode (in addition to the existing card-level button on HomePage). On click: `usePublishSchedule.mutateAsync(scheduleId)` → success → brief green banner → `setReviewMode(false)` → `navigate('/')` after 2 s. The 2 s gives the user time to read the banner.
+
+---
+
+## 2026-05-28 — Phase 8: Polish
+
+### Error boundaries
+Added `ErrorBoundary` class component (wraps React's `componentDidCatch`). Placed around the entire protected route tree in `App.tsx`. Each page crash shows a friendly error UI with "Try again" (resets boundary state) and "Go home" (navigates to `/`). Logs to console for dev; could forward to Sentry in prod.
+
+### Loading skeletons (HomePage)
+Replaced the `<Spinner>` full-page loader on `HomePage` with 3 `<SkeletonCard>` placeholders. These mimic the visual footprint of real schedule cards so the page doesn't jump in layout when data arrives. Definitions pages keep their simple row-level spinners for now — the data is small enough that skeleton feel is overkill there.
+
+### Print styles (CompactView)
+Added `@media print` rules to `index.css`:
+- `aside` (sidebar) is hidden
+- `[data-no-print]` elements are hidden — Topbar has `data-no-print` attribute
+- `#root` and `main` have height/overflow reset so the full table can flow across pages
+- `print-color-adjust: exact` forces subject color blocks to render even with "Print backgrounds" off
+
+### Dark mode transitions
+Added CSS transitions for `background-color`, `border-color`, and `color` on all structural HTML elements (`div`, `span`, `p`, `td`, etc.) in `index.css`. Interactive elements (`button`, `input`) were deliberately excluded to keep hover feedback snappy. `transform` was excluded to keep DnD performance unaffected.
+
+### RTL audit result
+All Hebrew text fields consistently use the `.hebrew` CSS class (sets `direction: rtl; text-align: right`). Key sites:
+- LessonCard: subject name + teacher name — ✅
+- TeachersPage: teacher name in list + form input with `isHebrew` — ✅
+- LessonsPage: form inputs for lesson names use `isHebrew` — verified
+- CompactView: subject name in legend has `.hebrew` — ✅
+- Sidebar: "זמנים" Hebrew label in logo — renders inline, no RTL needed (two chars)

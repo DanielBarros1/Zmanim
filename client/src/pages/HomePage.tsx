@@ -24,7 +24,7 @@ import { Modal } from '../components/ui/Modal'
 import { Input } from '../components/ui/Input'
 import { EmptyState } from '../components/ui/EmptyState'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
-import { Spinner } from '../components/ui/Spinner'
+import { SkeletonCard } from '../components/ui/Skeleton'
 import { AutoSchedulerModal } from '../components/schedule/AutoSchedulerModal'
 import {
   useSchedules,
@@ -229,7 +229,9 @@ export function HomePage() {
   if (isLoading) {
     return (
       <AppShell title="Schedules">
-        <div className="flex justify-center py-20"><Spinner size="lg" /></div>
+        <div className="grid gap-4 max-w-3xl">
+          {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
+        </div>
       </AppShell>
     )
   }

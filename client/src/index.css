@@ -101,3 +101,51 @@ body {
   direction: rtl;
   text-align: right;
 }
+
+/* ── Dark mode transition ────────────────────────────────────────
+   Apply smooth color transitions to layout elements so the theme
+   toggle doesn't flash. We intentionally exclude interactive
+   controls (button, input) to avoid slowing hover feedback, and
+   we exclude 'transform' so DnD performance isn't affected.
+─────────────────────────────────────────────────────────────── */
+div, span, p, h1, h2, h3, h4, h5, h6, aside, header, main, section, article,
+td, th, tr, table, ul, li, nav, footer {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.1s ease;
+}
+
+/* ── Print styles — optimised for CompactViewPage ───────────────
+   When the user clicks "Print", hide all navigation chrome and
+   let the table fill the full page width.
+─────────────────────────────────────────────────────────────── */
+@media print {
+  /* Hide sidebar and topbar */
+  aside,
+  [data-no-print] {
+    display: none !important;
+  }
+
+  /* Let the root container flow normally instead of fixed-height flex */
+  #root {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Remove scrolling constraints so the full table prints */
+  main {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* White background, black text for print */
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Force color blocks to render even with "Print backgrounds" off */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

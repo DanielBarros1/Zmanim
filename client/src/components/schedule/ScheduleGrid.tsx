@@ -19,7 +19,7 @@
  * show the card in each relevant class column).
  */
 
-import { useCallback, Fragment } from 'react'
+import { useCallback, useEffect, Fragment } from 'react'
 import type {
   ScheduleEntry,
   Lesson,
@@ -33,6 +33,7 @@ import type { EvaluationResult } from '@zmanim/shared'
 import type { Day } from '@zmanim/shared'
 import { LessonCard } from './LessonCard'
 import { EmptyCell } from './EmptyCell'
+import { useScheduleStore } from '../../store/scheduleStore'
 
 // Compute human-readable slot time from config
 function slotTime(
@@ -121,6 +122,20 @@ export function ScheduleGrid({
       }
     }
   }
+
+  const { highlightedEntryIds } = useScheduleStore()
+
+  // Scroll to the first highlighted entry after its day has been switched into view.
+  // 200 ms gives React time to re-render the new day before we query the DOM.
+  useEffect(() => {
+    if (highlightedEntryIds.length === 0) return
+    const id = highlightedEntryIds[0]
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-entry-id="${id}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [highlightedEntryIds])
 
   const handleCellClick = useCallback(
     (slot: number, classId: string) => {
@@ -241,6 +256,8 @@ export function ScheduleGrid({
                     return (
                       <td
                         key={cls.id}
+                        // data-entry-id lets the scroll-to-highlight effect find this cell
+                        {...(entry ? { 'data-entry-id': entry.id } : {})}
                         className="p-1 align-top"
                         style={{
                           borderBottom: '1px solid var(--border)',

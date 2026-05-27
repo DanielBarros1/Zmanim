@@ -22,6 +22,7 @@
 
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthGuard } from './components/layout/AuthGuard'
+import { ErrorBoundary } from './components/layout/ErrorBoundary'
 import { LoginPage } from './pages/LoginPage'
 import { HomePage } from './pages/HomePage'
 import { ScheduleEditorPage } from './pages/ScheduleEditorPage'
@@ -41,31 +42,34 @@ export default function App() {
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
 
-      {/* Protected */}
+      {/* Protected — each route wrapped in its own ErrorBoundary so a crash
+          on one page doesn't take down the rest of the app */}
       <Route
         path="/*"
         element={
           <AuthGuard>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/schedules/:id" element={<ScheduleEditorPage />} />
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<HomePage />} />
+                <Route path="/schedules/:id" element={<ScheduleEditorPage />} />
 
-              {/* Definitions */}
-              <Route path="/definitions/config" element={<ConfigPage />} />
-              <Route path="/definitions/subjects" element={<SubjectsPage />} />
-              <Route path="/definitions/rooms" element={<RoomsPage />} />
-              <Route path="/definitions/teachers" element={<TeachersPage />} />
-              <Route path="/definitions/lessons" element={<LessonsPage />} />
-              <Route path="/definitions/restrictions" element={<RestrictionsPage />} />
+                {/* Definitions */}
+                <Route path="/definitions/config" element={<ConfigPage />} />
+                <Route path="/definitions/subjects" element={<SubjectsPage />} />
+                <Route path="/definitions/rooms" element={<RoomsPage />} />
+                <Route path="/definitions/teachers" element={<TeachersPage />} />
+                <Route path="/definitions/lessons" element={<LessonsPage />} />
+                <Route path="/definitions/restrictions" element={<RestrictionsPage />} />
 
-              {/* Views */}
-              <Route path="/views/teacher" element={<TeacherViewPage />} />
-              <Route path="/views/grade" element={<GradeViewPage />} />
-              <Route path="/views/compact" element={<CompactViewPage />} />
+                {/* Views */}
+                <Route path="/views/teacher" element={<TeacherViewPage />} />
+                <Route path="/views/grade" element={<GradeViewPage />} />
+                <Route path="/views/compact" element={<CompactViewPage />} />
 
-              {/* Fallback */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+                {/* Fallback */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </ErrorBoundary>
           </AuthGuard>
         }
       />

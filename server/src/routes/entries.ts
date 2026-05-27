@@ -27,6 +27,28 @@ const overrideSchema = z.object({
   note: z.string().optional(),
 })
 
+// ─── Get all entries ───────────────────────────────────────────
+
+entriesRouter.get('/:id/entries', requireAuth, async (req, res, next) => {
+  try {
+    const entries = await prisma.scheduleEntry.findMany({
+      where: { scheduleId: req.params.id },
+      include: { overrides: true },
+      orderBy: [{ day: 'asc' }, { slot: 'asc' }],
+    })
+    res.json(entries)
+  } catch (err) { next(err) }
+})
+
+// ─── Evaluate current state without modifying anything ────────
+
+entriesRouter.get('/:id/evaluate', requireAuth, async (req, res, next) => {
+  try {
+    const evalResult = await runEvaluation(req.params.id)
+    res.json(evalResult)
+  } catch (err) { next(err) }
+})
+
 // ─── Place lesson ──────────────────────────────────────────────
 
 entriesRouter.post('/:id/entries', requireAuth, requireAdmin, async (req, res, next) => {

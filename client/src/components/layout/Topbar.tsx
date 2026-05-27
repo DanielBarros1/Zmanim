@@ -20,6 +20,7 @@ export function Topbar({ title, actions }: TopbarProps) {
 
   return (
     <header
+      data-no-print
       className="flex items-center px-6 shrink-0"
       style={{
         height: 56,

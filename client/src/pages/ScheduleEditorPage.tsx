@@ -8,17 +8,30 @@
  *   - Dragging from grid → drop on occupied cell → swap (move existing out to pool first)
  *   - Client evaluator runs on drag start to show preview violations
  *   - If violations found → ViolationConfirmModal shown before API call
- *   - Server confirms placement and returns authoritative EvaluationResult
+ *   - Server confirms placement and updates evaluation cache via useEvaluation()
+ *
+ * Review Mode (set after auto-scheduler completes or manually toggled):
+ *   - Grid is read-only; lesson pool is hidden
+ *   - Violation panel auto-opens
+ *   - Topbar shows "Publish Schedule" + "← Edit Mode" buttons
+ *   - After publish: green success banner → redirect to home in 2 s
+ *
+ * Evaluation flow:
+ *   - useEvaluation() fetches the authoritative EvaluationResult on mount
+ *   - usePlaceEntry / useMoveEntry / useRemoveEntry all write their returned
+ *     evaluation into the same React Query cache key, so the evaluation shown
+ *     is always current without any local useState.
  *
  * Layout:
  *   <AppShell noScroll>
+ *     [PublishSuccessBanner]
  *     <StatsBar />
  *     <DayTabs />
  *     <ViolationsBanner /> (conditional)
  *     <main row>
  *       <ScheduleGrid />
- *       <LessonPool />
- *       <ViolationPanel /> (conditional, slide-in)
+ *       <LessonPool />         (hidden in review mode)
+ *       <ViolationPanel />     (conditional, slide-in)
  *     </main>
  *   </AppShell>
  */
@@ -44,7 +57,15 @@ import { ViolationPanel } from '../components/schedule/ViolationPanel'
 import { ViolationConfirmModal } from '../components/schedule/ViolationConfirmModal'
 import { Button } from '../components/ui/Button'
 import { CenteredSpinner } from '../components/ui/Spinner'
-import { useSchedule, useEntries, usePlaceEntry, useMoveEntry, useRemoveEntry } from '../api/schedules'
+import {
+  useSchedule,
+  useEntries,
+  useEvaluation,
+  usePlaceEntry,
+  useMoveEntry,
+  useRemoveEntry,
+  usePublishSchedule,
+} from '../api/schedules'
 import { useSubjects } from '../api/subjects'
 import { useTeachers } from '../api/teachers'
 import { useGrades, useClasses } from '../api/grades'
@@ -54,7 +75,7 @@ import { useUIStore } from '../store/uiStore'
 import { useScheduleStore } from '../store/scheduleStore'
 import { checkProposed } from '../lib/evaluator'
 import type { ClientViolation } from '../lib/evaluator'
-import type { EvaluationResult, ScheduleSummary } from '@zmanim/shared'
+import type { ScheduleSummary } from '@zmanim/shared'
 import type { Day, RestrictionType } from '@zmanim/shared'
 
 // ── Drag overlay pill ──────────────────────────────────────────
@@ -70,6 +91,24 @@ function DragPill({ label }: { label: string }) {
   )
 }
 
+// ── Publish success banner ─────────────────────────────────────
+
+function PublishBanner() {
+  return (
+    <div
+      className="px-6 py-3 text-center text-[13px] font-semibold flex-shrink-0 flex items-center justify-center gap-2"
+      style={{
+        background: 'var(--ok-bg)',
+        color: 'var(--ok-text)',
+        borderBottom: '1px solid var(--ok-border)',
+      }}
+    >
+      <span>✅</span>
+      <span>Schedule published successfully — returning to home…</span>
+    </div>
+  )
+}
+
 // ── Page ────────────────────────────────────────────────────────
 
 export function ScheduleEditorPage() {
@@ -79,6 +118,7 @@ export function ScheduleEditorPage() {
   // Data fetching
   const { data: schedule, isLoading: scheduleLoading } = useSchedule(scheduleId)
   const { data: entries = [], isLoading: entriesLoading } = useEntries(scheduleId)
+  const { data: evaluation = null } = useEvaluation(scheduleId)
   const { data: lessons = [] } = useLessons()
   const { data: subjects = [] } = useSubjects()
   const { data: teachers = [] } = useTeachers()
@@ -90,12 +130,13 @@ export function ScheduleEditorPage() {
   const placeEntry = usePlaceEntry(scheduleId)
   const moveEntry = useMoveEntry(scheduleId)
   const removeEntry = useRemoveEntry(scheduleId)
+  const publishSchedule = usePublishSchedule()
 
   // UI state
-  const { activeDay, setActiveDay, isReviewMode } = useUIStore()
-  const { clearHighlight } = useScheduleStore()
+  const { activeDay, setActiveDay, isReviewMode, setReviewMode } = useUIStore()
+  const { highlightedEntryIds, clearHighlight } = useScheduleStore()
   const [showViolationPanel, setShowViolationPanel] = useState(false)
-  const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null)
+  const [publishSuccess, setPublishSuccess] = useState(false)
 
   // Drag state
   const [activeDrag, setActiveDrag] = useState<{
@@ -111,11 +152,6 @@ export function ScheduleEditorPage() {
     execute: (note?: string) => Promise<void>
   } | null>(null)
 
-  // Update evaluation from last server response
-  const handlePlacementResult = useCallback((result: { evaluation: EvaluationResult }) => {
-    setEvaluation(result.evaluation)
-  }, [])
-
   // Keep active day from config work days
   const workDays = config?.workDays ?? []
 
@@ -125,6 +161,24 @@ export function ScheduleEditorPage() {
       setActiveDay(workDays[0] as Day)
     }
   }, [workDays, activeDay, setActiveDay])
+
+  // Auto-open violation panel when entering Review Mode (e.g. after AS run)
+  useEffect(() => {
+    if (isReviewMode) {
+      setShowViolationPanel(true)
+    }
+  }, [isReviewMode])
+
+  // Switch active day to the day of the first highlighted entry so the cell
+  // is visible when the user clicks a violation's "Highlight" button.
+  useEffect(() => {
+    if (highlightedEntryIds.length === 0) return
+    const firstEntry = entries.find(e => highlightedEntryIds.includes(e.id))
+    if (firstEntry && firstEntry.day !== activeDay) {
+      setActiveDay(firstEntry.day as Day)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightedEntryIds])
 
   // ── DnD setup ──────────────────────────────────────────────────
 
@@ -173,7 +227,7 @@ export function ScheduleEditorPage() {
       const drag = activeDrag
       if (!drag) return
 
-      // Check client-side violations
+      // Check client-side violations (hard invariants only)
       const violations = checkProposed({
         entries,
         lessons,
@@ -188,21 +242,19 @@ export function ScheduleEditorPage() {
       const execute = async (note?: string) => {
         try {
           if (drag.type === 'pool') {
-            // New placement from pool
-            const result = await placeEntry.mutateAsync({
+            // New placement from pool; evaluation cache updated in mutation's onSuccess
+            await placeEntry.mutateAsync({
               lessonId: drag.lessonId,
               day,
               slot,
-              // roomId omitted — server auto-assigns
               overrides: violations.map(v => ({
                 restrictionType: v.type as unknown as RestrictionType,
                 note,
               })),
             })
-            handlePlacementResult(result)
           } else if (drag.type === 'entry' && drag.entryId) {
-            // Move existing entry
-            const result = await moveEntry.mutateAsync({
+            // Move existing entry; evaluation cache updated in mutation's onSuccess
+            await moveEntry.mutateAsync({
               entryId: drag.entryId,
               data: {
                 day,
@@ -213,7 +265,6 @@ export function ScheduleEditorPage() {
                 })),
               },
             })
-            handlePlacementResult(result)
           }
         } catch (err) {
           console.error('Placement failed:', err)
@@ -221,14 +272,13 @@ export function ScheduleEditorPage() {
       }
 
       if (violations.length > 0) {
-        // Show override confirmation before executing
         setPendingAction({ violations, execute })
       } else {
         await execute()
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeDrag, entries, lessons, placeEntry, moveEntry, handlePlacementResult],
+    [activeDrag, entries, lessons, placeEntry, moveEntry],
   )
 
   // ── Actions ───────────────────────────────────────────────────
@@ -247,6 +297,20 @@ export function ScheduleEditorPage() {
     },
     [],
   )
+
+  const handlePublish = useCallback(async () => {
+    try {
+      await publishSchedule.mutateAsync(scheduleId)
+      setPublishSuccess(true)
+      // Give the user a moment to read the success banner, then go home
+      setTimeout(() => {
+        setReviewMode(false)
+        navigate('/')
+      }, 2000)
+    } catch (err) {
+      console.error('Publish failed:', err)
+    }
+  }, [publishSchedule, scheduleId, setReviewMode, navigate])
 
   // ── Loading / error ───────────────────────────────────────────
 
@@ -278,16 +342,54 @@ export function ScheduleEditorPage() {
     totalPlaced,
   }
 
-  const topbarActions = (
+  // ── Topbar actions — different in Review Mode vs Edit Mode ────
+
+  const topbarActions = isReviewMode ? (
     <div className="flex items-center gap-2">
-      {isReviewMode && (
-        <span
-          className="text-[11px] font-semibold px-2 py-1 rounded"
-          style={{ background: 'var(--warn-badge)', color: 'var(--warn-text)' }}
+      {/* Review Mode badge */}
+      <span
+        className="text-[11px] font-semibold px-2 py-1 rounded"
+        style={{ background: 'var(--warn-badge)', color: 'var(--warn-text)' }}
+      >
+        Review Mode
+      </span>
+
+      {/* Violation count shortcut */}
+      {evaluation && evaluation.counts.total > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowViolationPanel(p => !p)}
         >
-          Review Mode
-        </span>
+          {showViolationPanel ? 'Hide Violations' : 'Violations'}{' '}
+          ({evaluation.counts.total})
+        </Button>
       )}
+
+      {/* Exit back to edit mode without publishing */}
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          setReviewMode(false)
+          setShowViolationPanel(false)
+        }}
+      >
+        ← Edit Mode
+      </Button>
+
+      {/* Publish — the primary CTA in Review Mode */}
+      <Button
+        size="sm"
+        onClick={handlePublish}
+        loading={publishSchedule.isPending}
+        disabled={publishSuccess}
+      >
+        ✓ Publish Schedule
+      </Button>
+    </div>
+  ) : (
+    <div className="flex items-center gap-2">
       <Button
         variant="ghost"
         size="sm"
@@ -311,6 +413,9 @@ export function ScheduleEditorPage() {
       onDragEnd={handleDragEnd}
     >
       <AppShell title={schedule.name} actions={topbarActions} noScroll>
+        {/* Publish success banner (shown briefly before redirect) */}
+        {publishSuccess && <PublishBanner />}
+
         {/* Stats bar */}
         <StatsBar schedule={scheduleSummary} evaluation={evaluation} />
 
@@ -355,7 +460,7 @@ export function ScheduleEditorPage() {
             />
           )}
 
-          {/* Violation panel (slide-in) */}
+          {/* Violation panel (slide-in; always visible in review mode while open) */}
           {showViolationPanel && evaluation && (
             <ViolationPanel
               evaluation={evaluation}
