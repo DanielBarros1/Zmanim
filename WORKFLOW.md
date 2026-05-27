@@ -10,7 +10,7 @@ Brainstorm and lock down what we're building: features, scope, user types, edge 
 Decisions and guiding principles are committed into `docs/product-spec.md`.
 
 ## Phase 2 — Design Spec
-Generate HTML mockups (looks & feel only, no functionality) and iterate until we're happy.
+Generate multiple distinct HTML mockups (looks & feel only, no functionality) covering different visual directions, and iterate until we're happy.
 Finalized design decisions, color palette, and aesthetic principles are committed into `docs/design-spec.md`.
 
 ## Phase 3 — Implementation Plan
@@ -36,3 +36,5 @@ Ship it.
 - No ambiguity should survive past Phase 3.
 - If Claude is corrected during Phase 4, the correction goes into `dev-log.md` — not just applied silently.
 - Design and product decisions made in Phases 1–2 are the source of truth during implementation.
+- The app UI is in English. User-generated content (lesson names, teacher names, room names, etc.) is in Hebrew — RTL rendering for content fields is critical and must be treated as a first-class concern.
+- Features are organized into milestones. Milestone 1 targets scheduling staff. Future milestones (e.g. teacher-facing views) are documented as ideas in the product spec so they can inform early architecture decisions without blocking the first release.
