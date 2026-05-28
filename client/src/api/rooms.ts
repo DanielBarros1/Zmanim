@@ -35,7 +35,7 @@ export function useUpdateRoom() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Omit<Room, 'id'>> }) =>
-      apiClient.put<Room>(`/api/rooms/${id}`, data).then(r => r.data),
+      apiClient.patch<Room>(`/api/rooms/${id}`, data).then(r => r.data),
     onSuccess: updated =>
       qc.setQueryData<Room[]>(ROOMS_KEY, prev =>
         (prev ?? []).map(r => (r.id === updated.id ? updated : r)),

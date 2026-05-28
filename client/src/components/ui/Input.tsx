@@ -20,12 +20,15 @@ export function Input({ label, error, isHebrew, className = '', ...rest }: Input
         <label className="text-[12px] font-medium text-[var(--text-2)]">{label}</label>
       )}
       <input
+        // dir="rtl" is required (not just text-align) so the browser anchors the
+        // cursor on the right and flows text right-to-left as the user types Hebrew.
+        dir={isHebrew ? 'rtl' : undefined}
         className={[
           'w-full rounded-md border border-[var(--border)] bg-[var(--surface)]',
           'px-3 py-2 text-[13px] text-[var(--text-1)] placeholder-[var(--text-3)]',
           'focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]',
           'transition-colors disabled:opacity-50',
-          isHebrew ? 'text-right direction-rtl' : '',
+          isHebrew ? 'text-right' : '',
           error ? 'border-red-500' : '',
           className,
         ].join(' ')}

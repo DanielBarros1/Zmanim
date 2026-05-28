@@ -57,7 +57,7 @@ export function useUpdateRestriction() {
       id: string
       data: Partial<CreateRestrictionInput> & { isActive?: boolean }
     }) =>
-      apiClient.put<Restriction>(`/api/restrictions/${id}`, data).then(r => r.data),
+      apiClient.patch<Restriction>(`/api/restrictions/${id}`, data).then(r => r.data),
     onSuccess: updated =>
       qc.setQueryData<Restriction[]>(RESTRICTIONS_KEY, prev =>
         (prev ?? []).map(r => (r.id === updated.id ? updated : r)),

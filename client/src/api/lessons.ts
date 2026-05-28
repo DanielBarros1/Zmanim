@@ -70,7 +70,7 @@ export function useUpdateLesson() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<CreateLessonInput> }) =>
-      apiClient.put<Lesson>(`/api/lessons/${id}`, data).then(r => r.data),
+      apiClient.patch<Lesson>(`/api/lessons/${id}`, data).then(r => r.data),
     onSuccess: updated =>
       qc.setQueryData<Lesson[]>(LESSONS_KEY, prev =>
         (prev ?? []).map(l => (l.id === updated.id ? updated : l)),

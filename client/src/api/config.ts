@@ -25,7 +25,7 @@ export function useUpdateConfig() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: Partial<SchoolConfig>) =>
-      apiClient.put<SchoolConfig>('/api/config', data).then(r => r.data),
+      apiClient.patch<SchoolConfig>('/api/config', data).then(r => r.data),
     onSuccess: updated => qc.setQueryData(CONFIG_KEY, updated),
   })
 }

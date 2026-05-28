@@ -41,7 +41,7 @@ export function useUpdateTeacher() {
     }: {
       id: string
       data: { name?: string; subjectIds?: string[] }
-    }) => apiClient.put<Teacher>(`/api/teachers/${id}`, data).then(r => r.data),
+    }) => apiClient.patch<Teacher>(`/api/teachers/${id}`, data).then(r => r.data),
     onSuccess: updated =>
       qc.setQueryData<Teacher[]>(TEACHERS_KEY, prev =>
         (prev ?? []).map(t => (t.id === updated.id ? updated : t)),

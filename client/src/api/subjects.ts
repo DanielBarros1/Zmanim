@@ -36,7 +36,7 @@ export function useUpdateSubject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<Omit<Subject, 'id'>> }) =>
-      apiClient.put<Subject>(`/api/subjects/${id}`, data).then(r => r.data),
+      apiClient.patch<Subject>(`/api/subjects/${id}`, data).then(r => r.data),
     onSuccess: updated =>
       qc.setQueryData<Subject[]>(SUBJECTS_KEY, prev =>
         (prev ?? []).map(s => (s.id === updated.id ? updated : s)),
