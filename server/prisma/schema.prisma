@@ -119,6 +119,8 @@ model Subject {
   specializedRoomId String?
   specializedRoom   Room?    @relation("SpecializedSubjects", fields: [specializedRoomId], references: [id])
   lessons           Lesson[]
+  // Back-relation for the Teacher ↔ Subject many-to-many
+  teachers          Teacher[] @relation("TeacherSubjects")
   restrictions      Restriction[]
   createdAt         DateTime @default(now())
 }

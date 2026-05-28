@@ -64,6 +64,22 @@ export function LoginPage() {
         <p className="mt-4 text-center text-[11px] text-[var(--text-3)]">
           Restricted to @ankori.edu accounts
         </p>
+
+        {/* Dev-only bypass — shown only on localhost, hidden in production */}
+        {window.location.hostname === 'localhost' && (
+          <div className="mt-6 pt-5 border-t" style={{ borderColor: 'var(--border)' }}>
+            <p className="text-center text-[10px] text-[var(--text-3)] mb-3">
+              DEV ONLY
+            </p>
+            <a
+              href="/auth/dev-login"
+              className="flex items-center justify-center w-full rounded-lg border px-4 py-2.5 text-[12px] font-medium transition-colors hover:bg-[var(--surface-2)]"
+              style={{ borderColor: 'var(--border)', color: 'var(--text-2)' }}
+            >
+              🛠 Dev Login (no OAuth)
+            </a>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -240,8 +240,10 @@ export function HomePage() {
     <AppShell
       title="Schedules"
       actions={
-        <Button variant="secondary" onClick={() => setAsOpen(true)}>⚙ Auto-Schedule</Button>
-        <Button onClick={() => setCreateOpen(true)}>+ New Schedule</Button>
+        <>
+          <Button variant="secondary" onClick={() => setAsOpen(true)}>⚙ Auto-Schedule</Button>
+          <Button onClick={() => setCreateOpen(true)}>+ New Schedule</Button>
+        </>
       }
     >
       {sorted.length === 0 ? (
