@@ -124,6 +124,14 @@ function PublishBanner() {
   )
 }
 
+// ── Undo/redo ─────────────────────────────────────────────────────
+
+interface HistoryItem {
+  label: string
+  undo: () => Promise<void>
+  redo: () => Promise<void>
+}
+
 // ── Page ────────────────────────────────────────────────────────
 
 export function ScheduleEditorPage() {
@@ -150,6 +158,52 @@ export function ScheduleEditorPage() {
 
   // Rooms (for LessonCard badge + override popover)
   const { data: rooms = [] } = useRooms()
+
+  // ── Undo / redo ──────────────────────────────────────────────────
+  const undoStack = useRef<HistoryItem[]>([])
+  const redoStack = useRef<HistoryItem[]>([])
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
+
+  const syncUndoState = useCallback(() => {
+    setCanUndo(undoStack.current.length > 0)
+    setCanRedo(redoStack.current.length > 0)
+  }, [])
+
+  const pushHistory = useCallback((item: HistoryItem) => {
+    undoStack.current.push(item)
+    if (undoStack.current.length > 50) undoStack.current.shift()
+    redoStack.current = []
+    syncUndoState()
+  }, [syncUndoState])
+
+  const handleUndo = useCallback(async () => {
+    const item = undoStack.current.pop()
+    if (!item) return
+    redoStack.current.push(item)
+    syncUndoState()
+    try {
+      await item.undo()
+    } catch {
+      redoStack.current.pop()
+      undoStack.current.push(item)
+      syncUndoState()
+    }
+  }, [syncUndoState])
+
+  const handleRedo = useCallback(async () => {
+    const item = redoStack.current.pop()
+    if (!item) return
+    undoStack.current.push(item)
+    syncUndoState()
+    try {
+      await item.redo()
+    } catch {
+      undoStack.current.pop()
+      redoStack.current.push(item)
+      syncUndoState()
+    }
+  }, [syncUndoState])
 
   // UI state
   const { activeDay, setActiveDay, isReviewMode, setReviewMode } = useUIStore()
@@ -211,6 +265,30 @@ export function ScheduleEditorPage() {
       setActiveDay(workDays[0] as Day)
     }
   }, [workDays, activeDay, setActiveDay])
+
+  // Clear undo/redo history when switching to a different schedule
+  useEffect(() => {
+    undoStack.current = []
+    redoStack.current = []
+    syncUndoState()
+  }, [scheduleId, syncUndoState])
+
+  // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo
+  useEffect(() => {
+    if (isReviewMode) return
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        handleUndo()
+      } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+        e.preventDefault()
+        handleRedo()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isReviewMode, handleUndo, handleRedo])
 
   // Auto-open violation panel when entering Review Mode (e.g. after AS run)
   useEffect(() => {
@@ -411,6 +489,7 @@ export function ScheduleEditorPage() {
       const lesson = lessons.find(l => l.id === lessonId)
       const isGroupLesson =
         lesson?.type === LessonType.MATH_GROUP || lesson?.type === LessonType.ENGLISH_GROUP
+      const subjectName = subjects.find(s => s.id === lesson?.subjectId)?.name ?? 'Lesson'
 
       // Client-side constraint preview (hard invariants only — server is authoritative)
       const allViolations = checkProposed({
@@ -438,7 +517,12 @@ export function ScheduleEditorPage() {
             }))
 
             // Place the dragged lesson first
-            await placeEntry.mutateAsync({ lessonId, day, slot, overrides })
+            const result = await placeEntry.mutateAsync({ lessonId, day, slot, overrides })
+
+            // Mutable array — entryIds are updated by redo so undo always removes the right entries
+            const placed: Array<{ id: string; lessonId: string; day: Day; slot: number }> = [
+              { id: result.entry.id, lessonId, day, slot },
+            ]
 
             // ── Group auto-placement ───────────────────────────────────────
             // MATH_GROUP and ENGLISH_GROUP lessons for the same grade must all
@@ -467,10 +551,31 @@ export function ScheduleEditorPage() {
                 if (siblingRemaining <= 0) continue      // already fully placed
                 if (alreadyAtSlot.has(sibling.id)) continue  // already here
                 // No violation modal for siblings — they're synchronised by design
-                await placeEntry.mutateAsync({ lessonId: sibling.id, day, slot, overrides: [] })
+                const sibResult = await placeEntry.mutateAsync({ lessonId: sibling.id, day, slot, overrides: [] })
+                placed.push({ id: sibResult.entry.id, lessonId: sibling.id, day, slot })
               }
             }
+
+            // Single undo item undoes the whole batch (main + siblings)
+            pushHistory({
+              label: `Place ${subjectName}`,
+              undo: async () => {
+                for (const p of placed) await removeEntry.mutateAsync(p.id)
+              },
+              redo: async () => {
+                for (const p of placed) {
+                  const r = await placeEntry.mutateAsync({ lessonId: p.lessonId, day: p.day, slot: p.slot, overrides: [] })
+                  p.id = r.entry.id  // update ref so next undo removes the new entry
+                }
+              },
+            })
+
           } else if (type === 'entry' && entryId) {
+            // Capture original position before the move
+            const originalEntry = entries.find(e => e.id === entryId)
+            const fromDay = (originalEntry?.day ?? day) as Day
+            const fromSlot = originalEntry?.slot ?? slot
+
             await moveEntry.mutateAsync({
               entryId,
               data: {
@@ -480,6 +585,16 @@ export function ScheduleEditorPage() {
                   restrictionType: v.type as unknown as RestrictionType,
                   note,
                 })),
+              },
+            })
+
+            pushHistory({
+              label: `Move ${subjectName}`,
+              undo: async () => {
+                await moveEntry.mutateAsync({ entryId, data: { day: fromDay, slot: fromSlot, overrides: [] } })
+              },
+              redo: async () => {
+                await moveEntry.mutateAsync({ entryId, data: { day, slot, overrides: [] } })
               },
             })
           }
@@ -499,16 +614,35 @@ export function ScheduleEditorPage() {
         await execute()
       }
     },
-    [entries, lessons, placeEntry, moveEntry],
+    [entries, lessons, subjects, placeEntry, moveEntry, removeEntry, pushHistory],
   )
 
   // ── Actions ───────────────────────────────────────────────────
 
   const handleRemoveEntry = useCallback(
     async (entryId: string) => {
+      const entry = entries.find(e => e.id === entryId)
+      if (!entry) return
+      const lesson = lessons.find(l => l.id === entry.lessonId)
+      const subjectName = subjects.find(s => s.id === lesson?.subjectId)?.name ?? 'Lesson'
+      const { lessonId, day, slot } = entry
+
       await removeEntry.mutateAsync(entryId)
+
+      // Mutable ref — undo re-places (new ID), redo removes the re-placed entry
+      const placed = { id: '' }
+      pushHistory({
+        label: `Remove ${subjectName}`,
+        undo: async () => {
+          const r = await placeEntry.mutateAsync({ lessonId, day: day as Day, slot, overrides: [] })
+          placed.id = r.entry.id
+        },
+        redo: async () => {
+          await removeEntry.mutateAsync(placed.id)
+        },
+      })
     },
-    [removeEntry],
+    [entries, lessons, subjects, removeEntry, placeEntry, pushHistory],
   )
 
   const handleCellClick = useCallback(
@@ -620,6 +754,26 @@ export function ScheduleEditorPage() {
     </div>
   ) : (
     <div className="flex items-center gap-2">
+      {/* Undo / Redo */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleUndo}
+        disabled={!canUndo}
+        title="Undo (Ctrl+Z)"
+      >
+        ↩ Undo
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleRedo}
+        disabled={!canRedo}
+        title="Redo (Ctrl+Y)"
+      >
+        ↪ Redo
+      </Button>
+
       {/* Subject filter — dims non-matching cells */}
       <select
         value={filterSubjectId}

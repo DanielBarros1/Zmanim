@@ -30,11 +30,13 @@ import {
   useUpdateRestriction,
   useDeleteRestriction,
 } from '../../api/restrictions'
+import { useConfig } from '../../api/config'
 import { useTeachers } from '../../api/teachers'
 import { useGrades, useClasses } from '../../api/grades'
 import { useSubjects } from '../../api/subjects'
 import { useLessons } from '../../api/lessons'
-import { useConfig } from '../../api/config'
+import { TeacherAvailabilityModal } from '../../components/schedule/TeacherAvailabilityModal'
+import type { AvailabilityCell } from '../../components/schedule/TeacherAvailabilityModal'
 import {
   RestrictionType,
   RestrictionTier,
@@ -602,12 +604,13 @@ function HardInvariantsPanel() {
 // ── Teachers tab — teacher-first card layout ─────────────────────
 
 function TeachersTab({
-  teachers, restrictions, maps, onAdd, onToggle, onDelete,
+  teachers, restrictions, maps, onAdd, onAvailability, onToggle, onDelete,
 }: {
   teachers: Teacher[]
   restrictions: Restriction[]
   maps: EntityMaps
   onAdd: (teacherId: string) => void
+  onAvailability: (teacherId: string) => void
   onToggle: (r: Restriction) => void
   onDelete: (r: Restriction) => void
 }) {
@@ -655,9 +658,14 @@ function TeachersTab({
                   {teacher.name}
                 </span>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => onAdd(teacher.id)}>
-                + Add
-              </Button>
+              <div className="flex gap-1">
+                <Button variant="ghost" size="sm" onClick={() => onAvailability(teacher.id)} title="Edit availability grid">
+                  🗓 Availability
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onAdd(teacher.id)}>
+                  + Add
+                </Button>
+              </div>
             </div>
 
             {/* Restriction rows */}
@@ -780,6 +788,7 @@ export function RestrictionsPage() {
   const { data: classes = [] } = useClasses()
   const { data: subjects = [] } = useSubjects()
   const { data: lessons = [] } = useLessons()
+  const { data: config } = useConfig()
   const createRestriction = useCreateRestriction()
   const updateRestriction = useUpdateRestriction()
   const deleteRestriction = useDeleteRestriction()
@@ -793,6 +802,11 @@ export function RestrictionsPage() {
   const [bulkTeacherMode, setBulkTeacherMode] = useState(false)
   // Incrementing key forces the form to remount (reset all fields) after "Save & Add Another"
   const [formKey, setFormKey] = useState(0)
+
+  // Availability grid modal
+  const [availabilityTeacherId, setAvailabilityTeacherId] = useState<string | null>(null)
+  const [availabilitySaving, setAvailabilitySaving] = useState(false)
+  const availabilityTeacher = teachers.find(t => t.id === availabilityTeacherId) ?? null
 
   // Entity maps — used by resolveLabel for readable descriptions
   const maps: EntityMaps = {
@@ -881,6 +895,33 @@ export function RestrictionsPage() {
     }
   }
 
+  const handleAvailabilitySave = async (cells: AvailabilityCell[]) => {
+    if (!availabilityTeacherId) return
+    setAvailabilitySaving(true)
+    try {
+      // Delete all existing TEACHER_UNAVAILABLE_DAY_SLOT restrictions for this teacher
+      const existing = restrictions.filter(
+        r => r.teacherId === availabilityTeacherId &&
+             r.type === RestrictionType.TEACHER_UNAVAILABLE_DAY_SLOT
+      )
+      for (const r of existing) {
+        await deleteRestriction.mutateAsync(r.id)
+      }
+      // Create new ones from the grid
+      for (const cell of cells) {
+        await createRestriction.mutateAsync({
+          type: RestrictionType.TEACHER_UNAVAILABLE_DAY_SLOT,
+          tier: cell.tier,
+          teacherId: availabilityTeacherId,
+          params: { day: cell.day, slot: cell.slot },
+        })
+      }
+      setAvailabilityTeacherId(null)
+    } finally {
+      setAvailabilitySaving(false)
+    }
+  }
+
   const TAB_META: Array<{ id: Tab; label: string; count: number }> = [
     { id: 'teachers', label: 'Teachers', count: teacherRestrictions.length },
     { id: 'classes-lessons', label: 'Classes & Lessons', count: classLessonRestrictions.length },
@@ -936,6 +977,7 @@ export function RestrictionsPage() {
             restrictions={teacherRestrictions}
             maps={maps}
             onAdd={teacherId => openModal(teacherId)}
+            onAvailability={setAvailabilityTeacherId}
             onToggle={toggleActive}
             onDelete={setDeletingRestriction}
           />
@@ -1000,6 +1042,22 @@ export function RestrictionsPage() {
         loading={deleteRestriction.isPending}
         error={deleteError}
       />
+
+      {/* Teacher availability grid modal */}
+      {availabilityTeacher && config && (
+        <TeacherAvailabilityModal
+          open={!!availabilityTeacherId}
+          onClose={() => setAvailabilityTeacherId(null)}
+          onSave={handleAvailabilitySave}
+          saving={availabilitySaving}
+          teacher={availabilityTeacher}
+          restrictions={restrictions.filter(
+            r => r.teacherId === availabilityTeacherId &&
+                 r.type === RestrictionType.TEACHER_UNAVAILABLE_DAY_SLOT
+          )}
+          config={config}
+        />
+      )}
     </AppShell>
   )
 }

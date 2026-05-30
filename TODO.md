@@ -5,10 +5,11 @@
 
 ---
 
-## 🔴 Top Priority
+## ✅ Recently Completed
 
-### Undo / Redo in the editor
-Ctrl+Z / Ctrl+Y history stack on place/move/remove mutations. If you accidentally drag a lesson to the wrong slot, undo it instantly without hunting for where it was. Simple history stack on top of the existing `placeEntry` / `moveEntry` / `removeEntry` mutations. No data model changes needed.
+- **Undo / Redo** — Ctrl+Z/Ctrl+Y history stack in the schedule editor (place, move, remove). Group placements (MATH/ENGLISH) undo as one batch. Max 50 items. Buttons in topbar too.
+- **Teacher Availability Batch Editor** — 🗓 Availability button on each teacher card in Restrictions → Teachers. Visual day×slot grid, tiered cells (NON_NEGOTIABLE / IMPORTANT / FLEXIBLE). Saves as TEACHER_UNAVAILABLE_DAY_SLOT restrictions.
+- **Google OAuth** — credentials configured, profile picture shown in sidebar.
 
 ---
 
@@ -17,8 +18,7 @@ Ctrl+Z / Ctrl+Y history stack on place/move/remove mutations. If you accidentall
 ### 1. XLSX Exporter
 Export the published schedule to Excel. Format TBD — needs a decision on layout (one sheet per grade? per teacher? one big matrix?) before implementation.
 
-### 2. Teacher Availability Batch Editor
-A visual 5×4 grid per teacher where you click cells to mark unavailability, instead of creating restrictions one by one. Each cell should be tier-able: **non-negotiable / important / flexible** — not just a binary toggle. Eliminates the most tedious data-entry task in the app.
+### 2. ~~Teacher Availability Batch Editor~~ ✅ Done
 
 ### 3. Quick-Fix Suggestions on Violations
 A "Suggest fix" button next to each violation in the violations panel. Computes a valid move that eliminates the violation without creating new non-negotiables — turns the panel from a read-only report into an actionable assistant. **Large feature:** requires a semantic solver for each of the 20 violation types.
