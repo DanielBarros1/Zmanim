@@ -242,6 +242,7 @@ export function HomePage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [asOpen, setAsOpen] = useState(false)
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -255,8 +256,13 @@ export function HomePage() {
 
   const handleDelete = async () => {
     if (!deletingId) return
-    await deleteSchedule.mutateAsync(deletingId)
-    setDeletingId(null)
+    setDeleteError(null)
+    try {
+      await deleteSchedule.mutateAsync(deletingId)
+      setDeletingId(null)
+    } catch (err: any) {
+      setDeleteError(err?.response?.data?.error ?? 'Failed to delete schedule.')
+    }
   }
 
   // Sort: published first, then starred, then by updatedAt desc
@@ -267,6 +273,9 @@ export function HomePage() {
     if (!a.isStarred && b.isStarred) return 1
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   })
+
+  const deletingSchedule = deletingId ? sorted.find(s => s.id === deletingId) : null
+  const isDeletingPublished = deletingSchedule?.state === ScheduleState.PUBLISHED
 
   if (isLoading) {
     return (
@@ -353,13 +362,18 @@ export function HomePage() {
       {/* Delete confirm */}
       <ConfirmDialog
         open={!!deletingId}
-        onClose={() => setDeletingId(null)}
+        onClose={() => { setDeletingId(null); setDeleteError(null) }}
         onConfirm={handleDelete}
-        title="Delete schedule?"
-        description="All lesson placements in this schedule will be permanently removed. This cannot be undone."
+        title={isDeletingPublished ? 'Delete published schedule?' : 'Delete schedule?'}
+        description={
+          isDeletingPublished
+            ? '⚠️ This is the currently published schedule. Deleting it will remove it for everyone immediately. All lesson placements will be permanently lost. This cannot be undone.'
+            : 'All lesson placements in this schedule will be permanently removed. This cannot be undone.'
+        }
         confirmLabel="Delete Schedule"
         danger
         loading={deleteSchedule.isPending}
+        error={deleteError ?? undefined}
       />
 
       {/* Auto-scheduler modal */}

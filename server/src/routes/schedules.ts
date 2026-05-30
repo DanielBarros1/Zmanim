@@ -87,12 +87,8 @@ schedulesRouter.patch('/:id', requireAuth, requireAdmin, async (req, res, next) 
 
 schedulesRouter.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const schedule = await prisma.schedule.findUniqueOrThrow({ where: { id: req.params.id } })
-    if (schedule.state === 'PUBLISHED') {
-      res.status(409).json({ error: 'Cannot delete a published schedule. Unpublish it first by publishing another schedule.' })
-      return
-    }
-    // Cascade deletes entries + overrides (defined in schema)
+    // Cascade deletes entries + overrides (defined in schema).
+    // Published schedules can be deleted — the admin confirmed in the UI.
     await prisma.schedule.delete({ where: { id: req.params.id } })
     res.status(204).send()
   } catch (err) { next(err) }
