@@ -112,10 +112,28 @@ async function runJob(input: JobInput): Promise<void> {
     // Each lesson with hoursPerWeek=N generates N independent placements.
     const instances = expandLessons(lessons)
 
-    // Lessons covered by a seed entry are excluded from the random placement pool.
-    // We use lessonId-level exclusion so multi-hour lessons are fully handled by seeds.
-    const seededLessonIds = new Set(seedEntries.map((e: any) => e.lessonId))
-    const toPlace = instances.filter((inst: any) => !seededLessonIds.has(inst.lessonId))
+    // Count how many entries the seed schedule has per lesson.
+    // We do COUNT-based exclusion (not lessonId-based presence) so that a partial
+    // seed schedule (e.g. a lesson with hoursPerWeek=3 but only 2 seed entries)
+    // does NOT silently drop the unseeded hours — only the seeded instances are
+    // excluded, and the remainder are placed by the algorithm.
+    const seededCountPerLesson = new Map<string, number>()
+    for (const e of seedEntries) {
+      seededCountPerLesson.set(e.lessonId, (seededCountPerLesson.get(e.lessonId) ?? 0) + 1)
+    }
+    // seededLessonIds: still used for occupancy checks and Gate 3 below.
+    const seededLessonIds = new Set(seededCountPerLesson.keys())
+
+    // Build toPlace: for each lesson, include exactly (hoursPerWeek − seededCount) instances.
+    const toPlace: { lessonId: string; lesson: any }[] = []
+    const instSeenCount = new Map<string, number>()
+    for (const inst of instances) {
+      const seen   = instSeenCount.get(inst.lessonId) ?? 0
+      const seeded = seededCountPerLesson.get(inst.lessonId) ?? 0
+      instSeenCount.set(inst.lessonId, seen + 1)
+      if (seen < seeded) continue  // this instance is covered by a seed entry
+      toPlace.push(inst)
+    }
 
     // ── Feasibility diagnostics ────────────────────────────────────
     // For each class, compute total lesson hours (counting group lessons by their
@@ -722,6 +740,34 @@ async function runJob(input: JobInput): Promise<void> {
       // Count hard INVARIANT-tier violations in this restart's result.
       const invariantCount = evalResult.counts.invariant
 
+      // ── All-lessons-placed check (per restart) ──────────────────────
+      // Verify every instance that was in toPlace has a corresponding
+      // non-seeded entry.  The backtracking solver guarantees this for Phase B,
+      // but Phase A/A' can produce duplicate (lessonId, day, slot) pairs in
+      // degenerate configs (hoursPerWeek > available simultaneous slots), which
+      // would leave some instances displaced.  Catch it before saving.
+      {
+        const expectedPerLesson = new Map<string, number>()
+        for (const inst of toPlace) {
+          expectedPerLesson.set(inst.lessonId, (expectedPerLesson.get(inst.lessonId) ?? 0) + 1)
+        }
+        const actualPerLesson = new Map<string, number>()
+        for (const e of entries) {
+          if (!e.isSeeded) actualPerLesson.set(e.lessonId, (actualPerLesson.get(e.lessonId) ?? 0) + 1)
+        }
+        let restartAllPlaced = true
+        for (const [lessonId, expected] of expectedPerLesson) {
+          const actual = actualPerLesson.get(lessonId) ?? 0
+          if (actual < expected) {
+            console.warn(`[AutoScheduler] Restart ${restart + 1}: lesson ${lessonId.slice(-6)} placed ${actual}/${expected} instances — skipping restart`)
+            restartAllPlaced = false
+            nSkippedRestarts++
+            break
+          }
+        }
+        if (!restartAllPlaced) continue
+      }
+
       // Insert this restart's result into the top-3 list
       insertTopCandidate({ entries, score, hardCount, classConflicts, gradeSyncConflicts, invariantCount })
 
@@ -773,13 +819,14 @@ async function runJob(input: JobInput): Promise<void> {
       return
     }
 
-    // ── Phase 1: dedup → assign rooms → Gate 2 → full eval for each candidate ──
+    // ── Phase 1: dedup → assign rooms → Gate 2 → Gate 3 → full eval ──
     // We evaluate ALL candidates before persisting any so we can rank them by
     // their ACTUAL quality (full post-room evaluation) rather than the local-search
     // score (which skips room checks).  Only after sorting do we persist in order
     // so the schedule names ("Option 1 — Best", "Option 2", …) are accurate.
 
     const lessonMap = new Map(lessons.map((l: any) => [l.id, l]))
+    let nGate3Failures = 0  // Gate 3: unplaced-lesson failures across all candidates
 
     interface PreSaved {
       withRooms: any[]
@@ -799,6 +846,33 @@ async function runJob(input: JobInput): Promise<void> {
         lesson:    e.lesson ?? lessonMap.get(e.lessonId),
         overrides: e.overrides ?? [],
       })).filter((e: any) => e.lesson)
+
+      // ── Gate 3: all lessons must have all hours placed ──────────────
+      // Count entries per lesson in the enriched list and verify each lesson
+      // has exactly hoursPerWeek entries.  Partial placements are rejected here
+      // even if the invariant check (Gate 2) would pass — an incomplete schedule
+      // is never acceptable output regardless of violation counts.
+      {
+        const placedCounts = new Map<string, number>()
+        for (const e of enriched) {
+          placedCounts.set(e.lessonId, (placedCounts.get(e.lessonId) ?? 0) + 1)
+        }
+        const missingLessons: string[] = []
+        for (const l of lessons) {
+          const actual   = placedCounts.get(l.id) ?? 0
+          const expected = l.hoursPerWeek
+          if (actual < expected) {
+            const name = (l as any).subject?.name ?? l.id.slice(-6)
+            missingLessons.push(`"${name}" (${actual}/${expected} hrs)`)
+          }
+        }
+        if (missingLessons.length > 0) {
+          const preview = missingLessons.slice(0, 5).join(', ') + (missingLessons.length > 5 ? ` +${missingLessons.length - 5} more` : '')
+          console.warn(`[AutoScheduler] Candidate ${i + 1} failed Gate 3 (unplaced lessons): ${preview} — skipping`)
+          nGate3Failures++
+          continue
+        }
+      }
 
       // Gate 2: only true invariants (teacher/class double-booking etc.) block here
       const gateEval = evaluate({
@@ -875,10 +949,22 @@ async function runJob(input: JobInput): Promise<void> {
     }
 
     if (savedCandidates.length === 0) {
-      jobs.set(input.jobId, {
-        jobId: input.jobId, status: 'ERROR', progress: 100,
-        error: 'All candidate schedules failed the post-room-assignment invariant check. This is an algorithmic bug — please report it.',
-      })
+      const totalSlots = slotsPerDay * days.length
+      let error: string
+      if (nGate3Failures > 0) {
+        error =
+          `The auto-scheduler could not place all lessons in any of the ${topCandidates.length} ` +
+          `candidate schedule${topCandidates.length !== 1 ? 's' : ''}. ` +
+          `This usually means the total lesson hours for one or more classes exceed the available ` +
+          `slot budget (${slotsPerDay} slots/day × ${days.length} days = ${totalSlots} slots/class). ` +
+          `Fix: reduce lesson hours per class, increase "Slots per day" in School Config, ` +
+          `or add more working days.`
+      } else {
+        error =
+          `All candidate schedules failed the post-room-assignment invariant check. ` +
+          `This is an algorithmic bug — please report it.`
+      }
+      jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100, error })
       return
     }
 
