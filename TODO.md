@@ -7,6 +7,8 @@
 
 ## ✅ Recently Completed
 
+- **Quick-Fix Suggestions** — 💡 button on each violation in the panel. Server-side suggest-fix engine evaluates candidate moves in-memory and returns top-3 ranked by score improvement. 10 violation types supported (v1). Apply button calls moveEntry directly.
+- **Drag-Conflict Nudge Tooltip** — dark tooltip appears next to the cursor when hovering over a blocked cell during drag. Zero React re-renders — direct DOM manipulation via the existing pointermove handler. Shows the violation reason (e.g. "⛔ Teacher is already teaching at this slot").
 - **Undo / Redo** — Ctrl+Z/Ctrl+Y history stack in the schedule editor (place, move, remove). Group placements (MATH/ENGLISH) undo as one batch. Max 50 items. Buttons in topbar too.
 - **Teacher Availability Batch Editor** — 🗓 Availability button on each teacher card in Restrictions → Teachers. Visual day×slot grid, tiered cells (NON_NEGOTIABLE / IMPORTANT / FLEXIBLE). Saves as TEACHER_UNAVAILABLE_DAY_SLOT restrictions.
 - **Google OAuth** — credentials configured, profile picture shown in sidebar.
@@ -20,14 +22,12 @@ Export the published schedule to Excel. Format TBD — needs a decision on layou
 
 ### 2. ~~Teacher Availability Batch Editor~~ ✅ Done
 
-### 3. Quick-Fix Suggestions on Violations
-A "Suggest fix" button next to each violation in the violations panel. Computes a valid move that eliminates the violation without creating new non-negotiables — turns the panel from a read-only report into an actionable assistant. **Large feature:** requires a semantic solver for each of the 20 violation types.
+### 3. ~~Quick-Fix Suggestions~~ ✅ Done (v1 — 10 of 20 types; remaining 10 return "no fix found")
 
 ### 4. Per-Class Timetable Print / Export
 Bulk-generate one clean A4 timetable per class (Mon–Thu × slots, with subject/teacher/room per cell). All 12 classes in one PDF. Saves the admin from manually building these in Excel every semester.
 
-### 5. Drag-Conflict Nudge Tooltip
-When dragging a lesson and hovering over a blocked/red cell, show a small tooltip explaining *why* it's blocked — e.g. "Teacher already has History here" or "Creates a window violation for 8A". Removes the guesswork of "why is this cell red?"
+### 5. ~~Drag-Conflict Nudge Tooltip~~ ✅ Done
 
 ### 6. Teacher Personal Schedule Link (Milestone 2)
 A read-only URL (`/teacher/{token}`) showing a teacher's own weekly timetable from the published schedule. No login required, mobile-friendly, always reflects the latest published version. Teachers currently get a PDF by email — a live link means they always see the current state. This is Milestone 2 from the original spec.
