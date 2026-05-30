@@ -64,12 +64,60 @@ teachersRouter.patch('/:id', requireAuth, requireAdmin, async (req, res, next) =
 
 teachersRouter.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const inUse = await prisma.lesson.count({ where: { teacherId: req.params.id } })
-    if (inUse > 0) {
-      res.status(409).json({ error: 'Teacher is assigned to lessons and cannot be deleted.' })
-      return
+    const id = req.params.id
+
+    // Null out any User.teacherId references (User → Teacher is nullable)
+    await prisma.user.updateMany({ where: { teacherId: id }, data: { teacherId: null } })
+
+    // Delete teacher-scoped restrictions
+    await prisma.restriction.deleteMany({ where: { teacherId: id } })
+
+    // Cascade-delete lessons: overrides → entries → lesson-restrictions → lessons
+    const lessonIds = (
+      await prisma.lesson.findMany({ where: { teacherId: id }, select: { id: true } })
+    ).map(l => l.id)
+
+    if (lessonIds.length > 0) {
+      const entryIds = (
+        await prisma.scheduleEntry.findMany({ where: { lessonId: { in: lessonIds } }, select: { id: true } })
+      ).map(e => e.id)
+      if (entryIds.length > 0) {
+        await prisma.override.deleteMany({ where: { entryId: { in: entryIds } } })
+        await prisma.scheduleEntry.deleteMany({ where: { lessonId: { in: lessonIds } } })
+      }
+      await prisma.restriction.deleteMany({ where: { lessonId: { in: lessonIds } } })
+      await prisma.lesson.deleteMany({ where: { id: { in: lessonIds } } })
     }
-    await prisma.teacher.delete({ where: { id: req.params.id } })
+
+    await prisma.teacher.delete({ where: { id } })
     res.status(204).send()
+  } catch (err) { next(err) }
+})
+
+/**
+ * POST /api/teachers/backfill-subjects
+ *
+ * One-shot utility: inspects every lesson in the DB and ensures
+ * the lesson's teacher is connected to the lesson's subject.
+ * Safe to run multiple times (connect is idempotent).
+ */
+teachersRouter.post('/backfill-subjects', requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const lessons = await prisma.lesson.findMany({ select: { teacherId: true, subjectId: true } })
+    const map = new Map<string, Set<string>>()
+    for (const l of lessons) {
+      if (!l.teacherId) continue  // PARALLEL/MULTI_TEACHER have no primary teacher
+      if (!map.has(l.teacherId)) map.set(l.teacherId, new Set())
+      map.get(l.teacherId)!.add(l.subjectId)
+    }
+    let updated = 0
+    for (const [teacherId, subjectIds] of map) {
+      await prisma.teacher.update({
+        where: { id: teacherId },
+        data: { subjects: { connect: [...subjectIds].map(id => ({ id })) } },
+      })
+      updated++
+    }
+    res.json({ updated })
   } catch (err) { next(err) }
 })

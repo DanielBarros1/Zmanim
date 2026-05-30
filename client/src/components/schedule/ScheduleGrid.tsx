@@ -28,11 +28,13 @@ import type {
   Grade,
   Class,
   SchoolConfig,
+  Room,
 } from '@zmanim/shared'
 import type { EvaluationResult } from '@zmanim/shared'
 import type { Day } from '@zmanim/shared'
 import { LessonCard } from './LessonCard'
 import { EmptyCell } from './EmptyCell'
+import type { CellValidity } from './EmptyCell'
 import { useScheduleStore } from '../../store/scheduleStore'
 
 // Compute human-readable slot time from config
@@ -60,8 +62,29 @@ interface ScheduleGridProps {
   classes: Class[]
   config: SchoolConfig
   evaluation: EvaluationResult | null
+  rooms: Room[]
   isReviewMode?: boolean
+  /**
+   * When true, the outer div has NO overflow handling at all (no scroll container).
+   * Use this in the week view where an ancestor wrapper owns scrolling in both axes.
+   *
+   * Without this flag the div is overflow:auto, which creates a nested scroll
+   * container.  CSS also forbids mixing overflow-x:auto with overflow-y:visible —
+   * the spec converts visible → auto — so there is no way to have "horizontal
+   * scroll only" on a single element.  The solution is to remove overflow from
+   * this div entirely and let the week-view wrapper handle both axes.
+   */
+  noVerticalOverflow?: boolean
+  /**
+   * Per-cell drop validity computed by ScheduleEditorPage while a pool lesson
+   * is being dragged.  Key: `${day}:${slot}:${classId}`.
+   * Null when no pool drag is in progress.
+   */
+  cellValidity: Map<string, CellValidity> | null
+  /** When set, non-matching lesson cards are dimmed to 20% opacity */
+  filterSubjectId?: string
   onRemoveEntry: (entryId: string) => void
+  onChangeRoom: (entryId: string, roomId: string | null, which?: 1 | 2) => void
   onCellClick: (day: Day, slot: number, classId: string) => void
 }
 
@@ -75,8 +98,13 @@ export function ScheduleGrid({
   classes,
   config,
   evaluation,
+  rooms,
   isReviewMode,
+  noVerticalOverflow,
+  filterSubjectId,
+  cellValidity,
   onRemoveEntry,
+  onChangeRoom,
   onCellClick,
 }: ScheduleGridProps) {
   // Sort grades ascending
@@ -101,14 +129,16 @@ export function ScheduleGrid({
   // Entries for this day
   const dayEntries = entries.filter(e => e.day === day)
 
-  // Map: classId → slot → entry
-  const cellMap: Record<string, Record<number, ScheduleEntry>> = {}
+  // Map: classId → slot → entries[]
+  // Cells can have multiple entries when math/English sibling groups are placed simultaneously.
+  const cellMap: Record<string, Record<number, ScheduleEntry[]>> = {}
   for (const entry of dayEntries) {
     const lesson = lessonMap[entry.lessonId]
     if (!lesson) continue
     for (const classId of lesson.classIds) {
       if (!cellMap[classId]) cellMap[classId] = {}
-      cellMap[classId][entry.slot] = entry
+      if (!cellMap[classId][entry.slot]) cellMap[classId][entry.slot] = []
+      cellMap[classId][entry.slot].push(entry)
     }
   }
 
@@ -149,7 +179,20 @@ export function ScheduleGrid({
 
   return (
     <div
-      className="overflow-auto flex-1"
+      // In week view (noVerticalOverflow=true) we strip all overflow handling from
+      // this div and let the week-view wrapper own scrolling in both axes.
+      //
+      // WHY: CSS forbids mixing overflow-x:auto with overflow-y:visible — the spec
+      // converts the visible axis to auto automatically, so the div becomes a full
+      // scroll container regardless.  A nested scroll container reacts to pointer
+      // movement during drag (scroll bar appears / content shifts) even with
+      // dnd-kit's autoScroll disabled.
+      //
+      // By using no overflow here, the table naturally overflows into the
+      // week-view wrapper (which has overflow-x-auto overflow-y-auto), so both
+      // axes of scrolling are handled by that single outer container.  No nested
+      // scroll containers → no scroll conflict during drag.
+      className={noVerticalOverflow ? 'flex-1' : 'overflow-auto flex-1'}
       style={{ background: 'var(--bg)' }}
     >
       <table
@@ -247,17 +290,33 @@ export function ScheduleGrid({
 
                   {/* Class cells */}
                   {orderedClasses.map(cls => {
-                    const entry = cellMap[cls.id]?.[slot]
-                    const lesson = entry ? lessonMap[entry.lessonId] : undefined
-                    const subject = lesson ? subjectMap[lesson.subjectId] : undefined
-                    const teacher = lesson ? teacherMap[lesson.teacherId] : undefined
-                    const violations = entry ? (violationMap[entry.id] ?? []) : []
+                    const cellEntries = cellMap[cls.id]?.[slot] ?? []
+                    const isEmpty = cellEntries.length === 0
+
+                    // A cell occupied only by same-type sibling group lessons (math/English)
+                    // is also a valid DnD drop target — additional groups can go here.
+                    // We stamp data-cell-* on the <td> directly so elementsFromPoint()
+                    // can find it even when the EmptyCell div isn't present.
+                    const onlySiblingGroups =
+                      !isEmpty &&
+                      cellEntries.every(e => {
+                        const l = lessonMap[e.lessonId]
+                        return l?.type === 'MATH_GROUP' || l?.type === 'ENGLISH_GROUP'
+                      }) &&
+                      new Set(cellEntries.map(e => lessonMap[e.lessonId]?.type)).size === 1 &&
+                      new Set(cellEntries.map(e => lessonMap[e.lessonId]?.gradeId)).size === 1
 
                     return (
                       <td
                         key={cls.id}
                         // data-entry-id lets the scroll-to-highlight effect find this cell
-                        {...(entry ? { 'data-entry-id': entry.id } : {})}
+                        {...(cellEntries.length === 1 ? { 'data-entry-id': cellEntries[0].id } : {})}
+                        // data-cell-* on the <td> so DnD can drop onto group-occupied cells
+                        {...(onlySiblingGroups ? {
+                          'data-cell-day': day,
+                          'data-cell-slot': String(slot),
+                          'data-cell-class-id': cls.id,
+                        } : {})}
                         className="p-1 align-top"
                         style={{
                           borderBottom: '1px solid var(--border)',
@@ -265,27 +324,71 @@ export function ScheduleGrid({
                           minWidth: 110,
                           maxWidth: 140,
                           verticalAlign: 'top',
-                          height: 80,
+                          minHeight: 80,
                         }}
                       >
-                        {entry && lesson ? (
-                          <LessonCard
-                            entry={entry}
-                            lesson={lesson}
-                            subject={subject}
-                            teacher={teacher}
-                            violations={violations}
-                            onRemove={() => onRemoveEntry(entry.id)}
-                            isReviewMode={isReviewMode}
-                          />
-                        ) : (
+                        {isEmpty ? (
                           <EmptyCell
                             day={day}
                             slot={slot}
                             classId={cls.id}
                             onClick={() => handleCellClick(slot, cls.id)}
                             disabled={isReviewMode}
+                            validity={cellValidity?.get(`${day}:${slot}:${cls.id}`)}
                           />
+                        ) : (
+                          <div className="flex flex-col gap-0.5 w-full">
+                            {cellEntries.map(entry => {
+                              const lesson = lessonMap[entry.lessonId]
+                              if (!lesson) return null
+                              const subject = subjectMap[lesson.subjectId]
+
+                              // Subject filter: dim non-matching entries to 20% opacity
+                              const dimmed = !!filterSubjectId && lesson.subjectId !== filterSubjectId
+
+                              // Resolve the teacher shown in THIS column:
+                              //   REGULAR/SHARED/MATH_GROUP/ENGLISH_GROUP → single primary teacher
+                              //   PARALLEL → the teacher assigned to this specific class column
+                              //   MULTI_TEACHER → join all teacher names (no per-class split)
+                              let teacher: { id: string; name: string; subjectIds: string[]; createdAt: string } | undefined
+                              if (lesson.teacherId) {
+                                teacher = teacherMap[lesson.teacherId] as typeof teacher
+                              } else if (lesson.type === 'PARALLEL' && lesson.lessonTeachers?.length) {
+                                const lt = lesson.lessonTeachers.find(lt => lt.classId === cls.id)
+                                teacher = lt ? teacherMap[lt.teacherId] as typeof teacher : undefined
+                              } else if (lesson.lessonTeachers?.length) {
+                                teacher = {
+                                  id: '',
+                                  name: lesson.lessonTeachers
+                                    .map(lt => teacherMap[lt.teacherId]?.name ?? '?')
+                                    .join(' · '),
+                                  subjectIds: [],
+                                  createdAt: '',
+                                }
+                              }
+
+                              const violations = violationMap[entry.id] ?? []
+                              return (
+                                <div
+                                  key={entry.id}
+                                  style={{ opacity: dimmed ? 0.2 : 1, transition: 'opacity 0.15s' }}
+                                >
+                                  <LessonCard
+                                    entry={entry}
+                                    lesson={lesson}
+                                    subject={subject}
+                                    teacher={teacher}
+                                    violations={violations}
+                                    rooms={rooms}
+                                    displayClassId={cls.id}
+                                    onRemove={() => onRemoveEntry(entry.id)}
+                                    onChangeRoom={onChangeRoom}
+                                    isReviewMode={isReviewMode}
+                                  />
+                                </div>
+                              )
+                            })}
+                          </div>
                         )}
                       </td>
                     )

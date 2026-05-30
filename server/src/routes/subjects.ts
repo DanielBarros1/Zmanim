@@ -46,13 +46,29 @@ subjectsRouter.patch('/:id', requireAuth, requireAdmin, async (req, res, next) =
 
 subjectsRouter.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    // Guard: can't delete if used in any lesson
-    const inUse = await prisma.lesson.count({ where: { subjectId: req.params.id } })
-    if (inUse > 0) {
-      res.status(409).json({ error: 'Subject is used in one or more lessons and cannot be deleted.' })
-      return
+    const id = req.params.id
+
+    // Cascade-delete lessons: overrides → entries → lesson-restrictions → lessons
+    const lessonIds = (
+      await prisma.lesson.findMany({ where: { subjectId: id }, select: { id: true } })
+    ).map(l => l.id)
+
+    if (lessonIds.length > 0) {
+      const entryIds = (
+        await prisma.scheduleEntry.findMany({ where: { lessonId: { in: lessonIds } }, select: { id: true } })
+      ).map(e => e.id)
+      if (entryIds.length > 0) {
+        await prisma.override.deleteMany({ where: { entryId: { in: entryIds } } })
+        await prisma.scheduleEntry.deleteMany({ where: { lessonId: { in: lessonIds } } })
+      }
+      await prisma.restriction.deleteMany({ where: { lessonId: { in: lessonIds } } })
+      await prisma.lesson.deleteMany({ where: { id: { in: lessonIds } } })
     }
-    await prisma.subject.delete({ where: { id: req.params.id } })
+
+    // Delete restrictions that reference this subject directly
+    await prisma.restriction.deleteMany({ where: { subjectId: id } })
+
+    await prisma.subject.delete({ where: { id } })
     res.status(204).send()
   } catch (err) { next(err) }
 })

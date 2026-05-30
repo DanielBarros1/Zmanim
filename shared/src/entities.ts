@@ -87,17 +87,32 @@ export function classLabel(cls: Class, grade: Grade): string {
 
 // ─── Lesson ──────────────────────────────────────────────────
 
+/**
+ * One entry in the LessonTeacher join table.
+ * PARALLEL: two entries — one per class, each with a non-null classId.
+ * MULTI_TEACHER: N entries — one per teacher, each with classId = null (shared room).
+ */
+export interface LessonTeacherEntry {
+  teacherId: string
+  classId: string | null
+}
+
 export interface Lesson {
   id: string
   type: LessonType
   subjectId: string
-  teacherId: string
+  /** Primary teacher — null for PARALLEL and MULTI_TEACHER (use lessonTeachers instead). */
+  teacherId: string | null
   hoursPerWeek: number
-  /** For REGULAR: one classId. For SHARED: two classIds. For MATH_GROUP: both class IDs of the grade. */
+  /** For REGULAR: one classId. For SHARED/PARALLEL/MULTI_TEACHER: two classIds (same grade). For MATH_GROUP/ENGLISH_GROUP: both class IDs of the grade. */
   classIds: string[]
-  /** Required for MATH_GROUP — the grade these groups belong to */
+  /** Required for MATH_GROUP / ENGLISH_GROUP — the grade these groups belong to */
   gradeId: string | null
   mathLevel: MathLevel | null
+  /** For ENGLISH_GROUP — same 3/4/5 level structure as math */
+  englishLevel: MathLevel | null
+  /** PARALLEL and MULTI_TEACHER: per-teacher entries (empty for other types). */
+  lessonTeachers: LessonTeacherEntry[]
 }
 
 // ─── Schedule ────────────────────────────────────────────────
@@ -118,6 +133,8 @@ export interface ScheduleEntry {
   day: Day
   slot: number           // 1–4
   roomId: string | null
+  /** Second room — only populated for PARALLEL lessons (one room per class-teacher pair) */
+  roomId2: string | null
   isSeeded: boolean
   overrides: Override[]
 }

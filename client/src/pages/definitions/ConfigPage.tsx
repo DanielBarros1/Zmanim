@@ -157,7 +157,7 @@ export function ConfigPage() {
               max={120}
               value={form.lessonDuration ?? ''}
               onChange={e =>
-                setForm(p => ({ ...p, lessonDuration: Number(e.target.value) }))
+                setForm(p => ({ ...p, lessonDuration: Number(e.target.value) || 75 }))
               }
             />
             <Input
@@ -167,7 +167,7 @@ export function ConfigPage() {
               max={8}
               value={form.slotsPerDay ?? ''}
               onChange={e =>
-                setForm(p => ({ ...p, slotsPerDay: Number(e.target.value) }))
+                setForm(p => ({ ...p, slotsPerDay: Number(e.target.value) || 4 }))
               }
             />
           </div>
@@ -214,7 +214,7 @@ export function ConfigPage() {
                   min={1}
                   max={form.slotsPerDay ?? 4}
                   value={recess.afterSlot}
-                  onChange={e => updateRecess(idx, 'afterSlot', Number(e.target.value))}
+                  onChange={e => updateRecess(idx, 'afterSlot', Number(e.target.value) || 1)}
                   className="w-28"
                 />
                 <Input
@@ -224,7 +224,7 @@ export function ConfigPage() {
                   max={60}
                   value={recess.durationMinutes}
                   onChange={e =>
-                    updateRecess(idx, 'durationMinutes', Number(e.target.value))
+                    updateRecess(idx, 'durationMinutes', Number(e.target.value) || 10)
                   }
                   className="w-32"
                 />

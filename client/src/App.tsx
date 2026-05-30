@@ -35,6 +35,7 @@ import { RestrictionsPage } from './pages/definitions/RestrictionsPage'
 import { TeacherViewPage } from './pages/views/TeacherViewPage'
 import { GradeViewPage } from './pages/views/GradeViewPage'
 import { CompactViewPage } from './pages/views/CompactViewPage'
+import { ImportPage } from './pages/ImportPage'
 
 export default function App() {
   return (
@@ -65,6 +66,9 @@ export default function App() {
                 <Route path="/views/teacher" element={<TeacherViewPage />} />
                 <Route path="/views/grade" element={<GradeViewPage />} />
                 <Route path="/views/compact" element={<CompactViewPage />} />
+
+                {/* Import */}
+                <Route path="/import" element={<ImportPage />} />
 
                 {/* Fallback */}
                 <Route path="*" element={<Navigate to="/" replace />} />

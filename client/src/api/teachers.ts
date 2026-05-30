@@ -59,3 +59,16 @@ export function useDeleteTeacher() {
       ),
   })
 }
+
+/**
+ * Backfills teacher→subject connections from all existing lessons.
+ * Safe to call multiple times (connect is idempotent).
+ * On success, invalidates the teachers cache so subject pills refresh.
+ */
+export function useBackfillTeacherSubjects() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => apiClient.post('/api/teachers/backfill-subjects').then(r => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: TEACHERS_KEY }),
+  })
+}

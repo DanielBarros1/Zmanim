@@ -178,6 +178,25 @@ export function useMoveEntry(scheduleId: string) {
   })
 }
 
+/** PATCH /api/schedules/:id/entries/:entryId/room — change room assignment */
+export function useChangeEntryRoom(scheduleId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ entryId, roomId, roomId2 }: { entryId: string; roomId?: string | null; roomId2?: string | null }) =>
+      apiClient
+        .patch<ScheduleEntry>(
+          `/api/schedules/${scheduleId}/entries/${entryId}/room`,
+          { roomId, roomId2 },
+        )
+        .then(r => r.data),
+    onSuccess: entry => {
+      qc.setQueryData<ScheduleEntry[]>(entriesKey(scheduleId), prev =>
+        (prev ?? []).map(e => (e.id === entry.id ? entry : e)),
+      )
+    },
+  })
+}
+
 export interface RemoveEntryResponse {
   evaluation: EvaluationResult
 }
@@ -199,29 +218,131 @@ export function useRemoveEntry(scheduleId: string) {
   })
 }
 
-// ── Auto-Scheduler ──────────────────────────────────────────────
+// ── Overrides ───────────────────────────────────────────────────
 
-export interface AutoSchedulerConfig {
-  maxRestarts?: number
-  timeLimitMs?: number
+/**
+ * Add an override for a specific entry + restriction combination.
+ * Invalidates the evaluation cache so ViolationPanel re-renders.
+ *
+ * Only user-configured restrictions (restrictionId != null) can be stored
+ * in the DB — hard invariants (CLASS_SUBJECT_TWICE_PER_DAY, etc.) are
+ * blocked at the Prisma enum level.
+ *
+ * Adds the override to one entry; the evaluator marks the violation
+ * overridden if ANY affected entry has a matching override.
+ */
+export function useAddOverride(scheduleId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      entryId,
+      restrictionType,
+      restrictionId,
+      note,
+    }: {
+      entryId: string
+      restrictionType: string
+      restrictionId: string | null
+      note?: string
+    }) =>
+      apiClient
+        .post(`/api/schedules/${scheduleId}/entries/${entryId}/override`, {
+          restrictionType,
+          restrictionId,
+          note,
+        })
+        .then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: evaluationKey(scheduleId) })
+      qc.invalidateQueries({ queryKey: entriesKey(scheduleId) })
+    },
+  })
 }
 
+/**
+ * Remove all matching overrides for an entry + restriction combination.
+ * Calling this for all affectedEntryIds ensures a clean removal regardless
+ * of which entry(ies) the override was originally added to.
+ */
+export function useRemoveOverride(scheduleId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      entryId,
+      restrictionType,
+      restrictionId,
+    }: {
+      entryId: string
+      restrictionType: string
+      restrictionId: string | null
+    }) =>
+      apiClient
+        .delete<{ evaluation: EvaluationResult }>(
+          `/api/schedules/${scheduleId}/entries/${entryId}/override`,
+          { data: { restrictionType, restrictionId } },
+        )
+        .then(r => r.data),
+    onSuccess: result => {
+      // Use the server-returned evaluation so the panel updates instantly
+      qc.setQueryData(evaluationKey(scheduleId), result.evaluation)
+      qc.invalidateQueries({ queryKey: entriesKey(scheduleId) })
+    },
+  })
+}
+
+// ── Auto-Scheduler ──────────────────────────────────────────────
+
+/** Matches the server's POST /api/schedules/auto body schema exactly */
+export interface StartAutoSchedulerInput {
+  /** Name for the generated draft schedule (required by server) */
+  name: string
+  /** Optional: seed the search from an existing schedule's seeded entries */
+  seedScheduleId?: string
+  config?: {
+    /** Number of random restarts (default 50 on server) */
+    nRestarts?: number
+    /** Local-search iterations per restart (default 1000 on server) */
+    nIterations?: number
+  }
+}
+
+export interface CandidateResult {
+  scheduleId: string
+  name: string
+  score: number
+  violations: {
+    total: number
+    nonNegotiable: number
+    important: number
+    preferred: number
+    flexible: number
+  }
+}
+
+/** Matches the server's JobStatus shape (status is uppercase) */
 export interface AutoSchedulerJob {
   jobId: string
-  status: 'running' | 'done' | 'error'
-  progress: number
-  scheduleId?: string
-  error?: string
+  status: 'RUNNING' | 'DONE' | 'ERROR'
+  progress: number         // 0–100
+  statusMessage?: string   // human-readable phase label shown in the modal
+  candidates?: CandidateResult[]  // set when status === 'DONE'
+  scheduleId?: string      // convenience: candidates[0].scheduleId
+  error?: string           // set when status === 'ERROR'
 }
 
 export function useStartAutoScheduler() {
   return useMutation({
-    mutationFn: (config: AutoSchedulerConfig) =>
-      apiClient.post<AutoSchedulerJob>('/api/schedules/auto', config).then(r => r.data),
+    mutationFn: (input: StartAutoSchedulerInput) =>
+      apiClient
+        .post<{ jobId: string }>('/api/schedules/auto', input)
+        .then(r => r.data),
   })
 }
 
+/** Poll route: /api/schedules/auto/jobs/:jobId (note the /jobs/ segment) */
 export async function fetchJobStatus(jobId: string): Promise<AutoSchedulerJob> {
-  const res = await apiClient.get<AutoSchedulerJob>(`/api/schedules/auto/${jobId}`)
+  const res = await apiClient.get<AutoSchedulerJob>(
+    `/api/schedules/auto/jobs/${jobId}`,
+  )
   return res.data
 }

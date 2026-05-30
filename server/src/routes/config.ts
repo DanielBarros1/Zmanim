@@ -7,6 +7,7 @@
 
 import { Router } from 'express'
 import { z } from 'zod'
+import { Day } from '@prisma/client'
 import { prisma } from '../db'
 import { requireAuth, requireAdmin } from '../middleware/auth'
 
@@ -22,7 +23,7 @@ const DEFAULT_CONFIG = {
     { afterSlot: 2, durationMinutes: 20 },
     { afterSlot: 3, durationMinutes: 10 },
   ],
-  workDays: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY'],
+  workDays: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY'] as Day[],
 }
 
 const recessSchema = z.object({
@@ -51,7 +52,7 @@ configRouter.get('/', requireAuth, async (_req, res, next) => {
   }
 })
 
-configRouter.put('/', requireAuth, requireAdmin, async (req, res, next) => {
+configRouter.patch('/', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const data = configSchema.parse(req.body)
     let config = await prisma.schoolConfig.findFirst()

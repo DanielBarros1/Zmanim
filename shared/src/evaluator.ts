@@ -6,13 +6,16 @@
 import { RestrictionTier, RestrictionType } from './enums'
 
 // Hard invariant types (Category D — not stored in DB, always evaluated)
+// These always use RestrictionTier.INVARIANT and can never be overridden.
 export type HardInvariantType =
   | 'TEACHER_DOUBLE_BOOKED'
   | 'CLASS_DOUBLE_BOOKED'
   | 'MATH_GROUPS_NOT_SIMULTANEOUS'
+  | 'ENGLISH_GROUPS_NOT_SIMULTANEOUS'
   | 'ROOM_CONFLICT'
   | 'SPECIALIZED_ROOM_VIOLATED'
   | 'LESSON_HOURS_EXCEEDED'
+  | 'CLASS_SUBJECT_TWICE_PER_DAY'
 
 export interface Violation {
   /** null for hard invariants (no DB record) */
@@ -33,6 +36,7 @@ export interface EvaluationResult {
   score: number
   /** Violations grouped by tier for easy display */
   byTier: {
+    INVARIANT: Violation[]
     NON_NEGOTIABLE: Violation[]
     IMPORTANT: Violation[]
     PREFERRED: Violation[]
@@ -41,6 +45,8 @@ export interface EvaluationResult {
   /** Counts for the stats bar */
   counts: {
     total: number
+    /** Hard invariant violations — physically impossible placements */
+    invariant: number
     nonNegotiable: number
     important: number
     preferred: number

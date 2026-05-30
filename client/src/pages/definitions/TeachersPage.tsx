@@ -10,7 +10,7 @@
  *   - Restriction creation (filters teacher-level restrictions)
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AppShell } from '../../components/layout/AppShell'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -23,6 +23,7 @@ import {
   useCreateTeacher,
   useUpdateTeacher,
   useDeleteTeacher,
+  useBackfillTeacherSubjects,
 } from '../../api/teachers'
 import { useSubjects } from '../../api/subjects'
 import type { Teacher } from '@zmanim/shared'
@@ -39,11 +40,13 @@ function TeacherForm({
   onSave,
   onCancel,
   loading,
+  error,
 }: {
   initial: FormState
   onSave: (f: FormState) => void
   onCancel: () => void
   loading: boolean
+  error?: string
 }) {
   const [form, setForm] = useState(initial)
   const { data: subjects = [] } = useSubjects()
@@ -107,6 +110,12 @@ function TeacherForm({
         )}
       </div>
 
+      {error && (
+        <p className="text-[12px] text-red-500 rounded-md px-3 py-2" style={{ background: 'var(--warn-bg)' }}>
+          {error}
+        </p>
+      )}
+
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
@@ -125,31 +134,56 @@ export function TeachersPage() {
   const createTeacher = useCreateTeacher()
   const updateTeacher = useUpdateTeacher()
   const deleteTeacher = useDeleteTeacher()
+  const backfill = useBackfillTeacherSubjects()
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTeacher, setEditingTeacher] = useState<Teacher | null>(null)
   const [deletingTeacher, setDeletingTeacher] = useState<Teacher | null>(null)
+  const [deleteError, setDeleteError] = useState<string | undefined>()
+  const [createError, setCreateError] = useState<string>()
+  const [editError, setEditError] = useState<string>()
+  const [search, setSearch] = useState('')
+  const [filterSubjectId, setFilterSubjectId] = useState('')
+
+  // Backfill teacher-subject links from existing lessons on first mount
+  useEffect(() => { backfill.mutate() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const subjectMap = Object.fromEntries(subjects.map(s => [s.id, s]))
 
   const handleCreate = async (form: FormState) => {
-    await createTeacher.mutateAsync({ name: form.name.trim(), subjectIds: form.subjectIds })
-    setModalOpen(false)
+    setCreateError(undefined)
+    try {
+      await createTeacher.mutateAsync({ name: form.name.trim(), subjectIds: form.subjectIds })
+      setModalOpen(false)
+    } catch (err: any) {
+      setCreateError(err?.response?.data?.error ?? 'Failed to save teacher.')
+    }
   }
 
   const handleUpdate = async (form: FormState) => {
     if (!editingTeacher) return
-    await updateTeacher.mutateAsync({
-      id: editingTeacher.id,
-      data: { name: form.name.trim(), subjectIds: form.subjectIds },
-    })
-    setEditingTeacher(null)
+    setEditError(undefined)
+    try {
+      await updateTeacher.mutateAsync({
+        id: editingTeacher.id,
+        data: { name: form.name.trim(), subjectIds: form.subjectIds },
+      })
+      setEditingTeacher(null)
+    } catch (err: any) {
+      setEditError(err?.response?.data?.error ?? 'Failed to update teacher.')
+    }
   }
 
   const handleDelete = async () => {
     if (!deletingTeacher) return
-    await deleteTeacher.mutateAsync(deletingTeacher.id)
-    setDeletingTeacher(null)
+    setDeleteError(undefined)
+    try {
+      await deleteTeacher.mutateAsync(deletingTeacher.id)
+      setDeletingTeacher(null)
+      setDeleteError(undefined)
+    } catch (err: any) {
+      setDeleteError(err?.response?.data?.error ?? 'Failed to delete teacher.')
+    }
   }
 
   if (isLoading) {
@@ -173,8 +207,33 @@ export function TeachersPage() {
           action={<Button onClick={() => setModalOpen(true)}>+ New Teacher</Button>}
         />
       ) : (
+        <>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <input
+              type="search"
+              placeholder="Search teachers…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="rounded-md px-3 py-1.5 text-[13px] w-56"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-1)' }}
+            />
+            <select
+              value={filterSubjectId}
+              onChange={e => setFilterSubjectId(e.target.value)}
+              className="rounded-md px-3 py-1.5 text-[13px]"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: filterSubjectId ? 'var(--accent)' : 'var(--text-3)' }}
+            >
+              <option value="">All subjects</option>
+              {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
         <div className="space-y-2">
-          {teachers.map(teacher => (
+          {teachers
+            .filter(t =>
+              t.name.toLowerCase().includes(search.toLowerCase()) &&
+              (filterSubjectId === '' || t.subjectIds.includes(filterSubjectId))
+            )
+            .map(teacher => (
             <div
               key={teacher.id}
               className="flex items-center gap-4 px-4 py-3 rounded-lg border"
@@ -233,20 +292,26 @@ export function TeachersPage() {
             </div>
           ))}
         </div>
+        </>
       )}
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Teacher">
+      <Modal
+        open={modalOpen}
+        onClose={() => { setModalOpen(false); setCreateError(undefined) }}
+        title="New Teacher"
+      >
         <TeacherForm
           initial={EMPTY_FORM}
           onSave={handleCreate}
-          onCancel={() => setModalOpen(false)}
+          onCancel={() => { setModalOpen(false); setCreateError(undefined) }}
           loading={createTeacher.isPending}
+          error={createError}
         />
       </Modal>
 
       <Modal
         open={!!editingTeacher}
-        onClose={() => setEditingTeacher(null)}
+        onClose={() => { setEditingTeacher(null); setEditError(undefined) }}
         title="Edit Teacher"
       >
         {editingTeacher && (
@@ -256,21 +321,23 @@ export function TeachersPage() {
               subjectIds: [...editingTeacher.subjectIds],
             }}
             onSave={handleUpdate}
-            onCancel={() => setEditingTeacher(null)}
+            onCancel={() => { setEditingTeacher(null); setEditError(undefined) }}
             loading={updateTeacher.isPending}
+            error={editError}
           />
         )}
       </Modal>
 
       <ConfirmDialog
         open={!!deletingTeacher}
-        onClose={() => setDeletingTeacher(null)}
+        onClose={() => { setDeletingTeacher(null); setDeleteError(undefined) }}
         onConfirm={handleDelete}
         title={`Delete "${deletingTeacher?.name}"?`}
-        description="This will remove the teacher from associated lessons and restrictions."
+        description="All lessons and restrictions for this teacher will also be removed."
         confirmLabel="Delete Teacher"
         danger
         loading={deleteTeacher.isPending}
+        error={deleteError}
       />
     </AppShell>
   )

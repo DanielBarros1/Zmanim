@@ -51,12 +51,14 @@ function SubjectForm({
   onCancel,
   loading,
   usedColors,
+  error,
 }: {
   initial: FormState
   onSave: (f: FormState) => void
   onCancel: () => void
   loading: boolean
   usedColors: string[]
+  error?: string
 }) {
   const [form, setForm] = useState(initial)
   const { data: rooms = [] } = useRooms()
@@ -124,6 +126,12 @@ function SubjectForm({
         ))}
       </Select>
 
+      {error && (
+        <p className="text-[12px] text-red-500 rounded-md px-3 py-2" style={{ background: 'var(--warn-bg)' }}>
+          {error}
+        </p>
+      )}
+
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
@@ -145,37 +153,57 @@ export function SubjectsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null)
   const [deletingSubject, setDeletingSubject] = useState<Subject | null>(null)
+  const [deleteError, setDeleteError] = useState<string | undefined>()
+  const [createError, setCreateError] = useState<string>()
+  const [editError, setEditError] = useState<string>()
+  const [search, setSearch] = useState('')
 
   const usedColors = subjects.map(s => s.color)
 
   const handleCreate = async (form: FormState) => {
-    await createSubject.mutateAsync({
-      name: form.name.trim(),
-      isArts: form.isArts,
-      color: form.color,
-      specializedRoomId: form.specializedRoomId || null,
-    })
-    setModalOpen(false)
-  }
-
-  const handleUpdate = async (form: FormState) => {
-    if (!editingSubject) return
-    await updateSubject.mutateAsync({
-      id: editingSubject.id,
-      data: {
+    setCreateError(undefined)
+    try {
+      await createSubject.mutateAsync({
         name: form.name.trim(),
         isArts: form.isArts,
         color: form.color,
         specializedRoomId: form.specializedRoomId || null,
-      },
-    })
-    setEditingSubject(null)
+      })
+      setModalOpen(false)
+    } catch (err: any) {
+      setCreateError(err?.response?.data?.error ?? 'Failed to save subject.')
+    }
+  }
+
+  const handleUpdate = async (form: FormState) => {
+    if (!editingSubject) return
+    setEditError(undefined)
+    try {
+      await updateSubject.mutateAsync({
+        id: editingSubject.id,
+        data: {
+          name: form.name.trim(),
+          isArts: form.isArts,
+          color: form.color,
+          specializedRoomId: form.specializedRoomId || null,
+        },
+      })
+      setEditingSubject(null)
+    } catch (err: any) {
+      setEditError(err?.response?.data?.error ?? 'Failed to update subject.')
+    }
   }
 
   const handleDelete = async () => {
     if (!deletingSubject) return
-    await deleteSubject.mutateAsync(deletingSubject.id)
-    setDeletingSubject(null)
+    setDeleteError(undefined)
+    try {
+      await deleteSubject.mutateAsync(deletingSubject.id)
+      setDeletingSubject(null)
+      setDeleteError(undefined)
+    } catch (err: any) {
+      setDeleteError(err?.response?.data?.error ?? 'Failed to delete subject.')
+    }
   }
 
   const openEdit = (subject: Subject) => {
@@ -202,79 +230,61 @@ export function SubjectsPage() {
           icon="📚"
           title="No subjects yet"
           description="Add subjects to use in lesson planning."
-          action={
-            <Button onClick={() => setModalOpen(true)}>+ New Subject</Button>
-          }
+          action={<Button onClick={() => setModalOpen(true)}>+ New Subject</Button>}
         />
       ) : (
-        <div className="space-y-2">
-          {subjects.map(subject => (
-            <div
-              key={subject.id}
-              className="flex items-center gap-4 px-4 py-3 rounded-lg border"
-              style={{
-                background: 'var(--surface)',
-                borderColor: 'var(--border)',
-              }}
-            >
-              {/* Color swatch */}
-              <div
-                className="w-1 h-8 rounded-full shrink-0"
-                style={{ background: subject.color }}
-              />
-              {/* Name */}
-              <span
-                className="flex-1 text-[14px] font-medium text-[var(--text-1)] hebrew"
-              >
-                {subject.name}
-              </span>
-              {/* Tags */}
-              {subject.isArts && <Badge variant="accent">Arts</Badge>}
-              {subject.specializedRoomId && (
-                <Badge variant="neutral">Specialized Room</Badge>
-              )}
-              {/* Actions */}
-              <div className="flex gap-1 ml-auto">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => openEdit(subject)}
+        <>
+          <input
+            type="search"
+            placeholder="Search subjects…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="mb-3 w-full max-w-xs rounded-md px-3 py-1.5 text-[13px]"
+            style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-1)' }}
+          />
+          <div className="space-y-2">
+            {subjects
+              .filter(s => s.name.toLowerCase().includes(search.toLowerCase()))
+              .map(subject => (
+                <div
+                  key={subject.id}
+                  className="flex items-center gap-4 px-4 py-3 rounded-lg border"
+                  style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
                 >
-                  Edit
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setDeletingSubject(subject)}
-                  className="text-red-500 hover:text-red-600"
-                >
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
+                  <div className="w-1 h-8 rounded-full shrink-0" style={{ background: subject.color }} />
+                  <span className="flex-1 text-[14px] font-medium text-[var(--text-1)] hebrew">{subject.name}</span>
+                  {subject.isArts && <Badge variant="accent">Arts</Badge>}
+                  {subject.specializedRoomId && <Badge variant="neutral">Specialized Room</Badge>}
+                  <div className="flex gap-1 ml-auto">
+                    <Button variant="ghost" size="sm" onClick={() => openEdit(subject)}>Edit</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setDeletingSubject(subject)} className="text-red-500 hover:text-red-600">Delete</Button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </>
       )}
 
       {/* Create modal */}
       <Modal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => { setModalOpen(false); setCreateError(undefined) }}
         title="New Subject"
       >
         <SubjectForm
           initial={EMPTY_FORM}
           onSave={handleCreate}
-          onCancel={() => setModalOpen(false)}
+          onCancel={() => { setModalOpen(false); setCreateError(undefined) }}
           loading={createSubject.isPending}
           usedColors={usedColors}
+          error={createError}
         />
       </Modal>
 
       {/* Edit modal */}
       <Modal
         open={!!editingSubject}
-        onClose={() => setEditingSubject(null)}
+        onClose={() => { setEditingSubject(null); setEditError(undefined) }}
         title="Edit Subject"
       >
         {editingSubject && (
@@ -286,9 +296,10 @@ export function SubjectsPage() {
               specializedRoomId: editingSubject.specializedRoomId ?? '',
             }}
             onSave={handleUpdate}
-            onCancel={() => setEditingSubject(null)}
+            onCancel={() => { setEditingSubject(null); setEditError(undefined) }}
             loading={updateSubject.isPending}
             usedColors={usedColors.filter(c => c !== editingSubject.color)}
+            error={editError}
           />
         )}
       </Modal>
@@ -296,13 +307,14 @@ export function SubjectsPage() {
       {/* Delete confirm */}
       <ConfirmDialog
         open={!!deletingSubject}
-        onClose={() => setDeletingSubject(null)}
+        onClose={() => { setDeletingSubject(null); setDeleteError(undefined) }}
         onConfirm={handleDelete}
         title={`Delete "${deletingSubject?.name}"?`}
-        description="This will remove the subject from all associated lessons. This cannot be undone."
+        description="All lessons using this subject will also be removed."
         confirmLabel="Delete Subject"
         danger
         loading={deleteSubject.isPending}
+        error={deleteError}
       />
     </AppShell>
   )

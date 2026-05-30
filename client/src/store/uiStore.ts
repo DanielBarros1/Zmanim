@@ -3,7 +3,7 @@
  *
  * Dark mode: persisted to localStorage, applied as data-theme="dark" on <html>.
  * Active day: which day tab is visible in the schedule editor.
- * Sidebar: currently static (always visible in Milestone 1).
+ * Sidebar: collapsible; collapsed state persisted to localStorage.
  */
 
 import { create } from 'zustand'
@@ -21,6 +21,10 @@ interface UIState {
   // Review mode — set after auto-scheduler completes
   isReviewMode: boolean
   setReviewMode: (v: boolean) => void
+
+  // Sidebar collapse
+  sidebarCollapsed: boolean
+  toggleSidebar: () => void
 }
 
 /** Sync data-theme attribute to match current dark mode state */
@@ -37,6 +41,10 @@ function getInitialDark(): boolean {
   const stored = localStorage.getItem('zmanim-dark')
   if (stored !== null) return stored === 'true'
   return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+function getInitialSidebarCollapsed(): boolean {
+  return localStorage.getItem('zmanim-sidebar-collapsed') === 'true'
 }
 
 const initialDark = getInitialDark()
@@ -57,4 +65,12 @@ export const useUIStore = create<UIState>(set => ({
 
   isReviewMode: false,
   setReviewMode: v => set({ isReviewMode: v }),
+
+  sidebarCollapsed: getInitialSidebarCollapsed(),
+  toggleSidebar: () =>
+    set(state => {
+      const next = !state.sidebarCollapsed
+      localStorage.setItem('zmanim-sidebar-collapsed', String(next))
+      return { sidebarCollapsed: next }
+    }),
 }))

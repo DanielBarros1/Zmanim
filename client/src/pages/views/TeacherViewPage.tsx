@@ -12,7 +12,7 @@
  * Milestone 2 will surface this view to teachers via login.
  */
 
-import { useState, Fragment } from 'react'
+import { Fragment } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { AppShell } from '../../components/layout/AppShell'
 import { Select } from '../../components/ui/Select'
@@ -199,28 +199,29 @@ export function TeacherViewPage() {
   const { data: schedules = [] } = useSchedules()
 
   const publishedSchedule = schedules.find(s => s.state === ScheduleState.PUBLISHED)
-  const latestSchedule = schedules[0]
-  const activeSchedule = publishedSchedule ?? latestSchedule
+  const defaultScheduleId = publishedSchedule?.id ?? schedules[0]?.id ?? ''
 
-  const teacherId = searchParams.get('teacher') ?? teachers[0]?.id ?? ''
+  const teacherId  = searchParams.get('teacher')  ?? teachers[0]?.id ?? ''
+  const scheduleId = searchParams.get('schedule') ?? defaultScheduleId
 
-  const selectedTeacher = teachers.find(t => t.id === teacherId)
+  const selectedTeacher  = teachers.find(t => t.id === teacherId)
+  const selectedSchedule = schedules.find(s => s.id === scheduleId)
+
+  // Preserve both params when either changes
+  const setTeacher  = (id: string) => setSearchParams(p => { p.set('teacher',  id); return p })
+  const setSchedule = (id: string) => setSearchParams(p => { p.set('schedule', id); return p })
 
   if (isLoading) {
-    return (
-      <AppShell title="Teacher View">
-        <CenteredSpinner />
-      </AppShell>
-    )
+    return <AppShell title="Teacher View"><CenteredSpinner /></AppShell>
   }
 
   return (
     <AppShell title="Teacher View">
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex flex-wrap items-end gap-4 mb-6">
         <Select
           label="Teacher"
           value={teacherId}
-          onChange={e => setSearchParams({ teacher: e.target.value })}
+          onChange={e => setTeacher(e.target.value)}
           className="w-64"
         >
           <option value="">Select teacher…</option>
@@ -229,22 +230,34 @@ export function TeacherViewPage() {
           ))}
         </Select>
 
-        {activeSchedule && (
-          <div className="flex items-center gap-2 mt-5">
-            <span className="text-[12px] text-[var(--text-3)]">Schedule:</span>
-            <Badge variant={activeSchedule.state === ScheduleState.PUBLISHED ? 'published' : 'draft'}>
-              {activeSchedule.name}
+        <Select
+          label="Schedule"
+          value={scheduleId}
+          onChange={e => setSchedule(e.target.value)}
+          className="w-64"
+        >
+          {schedules.map(s => (
+            <option key={s.id} value={s.id}>
+              {s.name}{s.state === ScheduleState.PUBLISHED ? ' ★' : ''}
+            </option>
+          ))}
+        </Select>
+
+        {selectedSchedule && (
+          <div className="mb-0.5">
+            <Badge variant={selectedSchedule.state === ScheduleState.PUBLISHED ? 'published' : 'draft'}>
+              {selectedSchedule.state === ScheduleState.PUBLISHED ? 'Published' : 'Draft'}
             </Badge>
           </div>
         )}
       </div>
 
-      {selectedTeacher && activeSchedule ? (
+      {selectedTeacher && scheduleId ? (
         <>
           <h2 className="text-[16px] font-semibold text-[var(--text-1)] hebrew mb-2">
             {selectedTeacher.name}
           </h2>
-          <TeacherGrid teacherId={teacherId} scheduleId={activeSchedule.id} />
+          <TeacherGrid teacherId={teacherId} scheduleId={scheduleId} />
         </>
       ) : (
         <p className="text-[var(--text-3)] text-[13px]">

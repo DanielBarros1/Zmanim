@@ -8,7 +8,7 @@
  * the weekly schedule for their grade.
  */
 
-import { useState, Fragment } from 'react'
+import { Fragment } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { AppShell } from '../../components/layout/AppShell'
 import { Select } from '../../components/ui/Select'
@@ -21,7 +21,7 @@ import { useLessons } from '../../api/lessons'
 import { useSchedules, useEntries } from '../../api/schedules'
 import { useConfig } from '../../api/config'
 import { DAY_ORDER, ScheduleState } from '@zmanim/shared'
-import type { Day, ScheduleEntry, Lesson } from '@zmanim/shared'
+import type { Day, ScheduleEntry } from '@zmanim/shared'
 
 const DAY_SHORT: Record<Day, string> = {
   SUNDAY: 'Sun', MONDAY: 'Mon', TUESDAY: 'Tue', WEDNESDAY: 'Wed', THURSDAY: 'Thu',
@@ -211,10 +211,17 @@ export function GradeViewPage() {
   const { data: schedules = [] } = useSchedules()
 
   const publishedSchedule = schedules.find(s => s.state === ScheduleState.PUBLISHED)
-  const activeSchedule = publishedSchedule ?? schedules[0]
+  const defaultScheduleId = publishedSchedule?.id ?? schedules[0]?.id ?? ''
 
-  const gradeId = searchParams.get('grade') ?? grades[0]?.id ?? ''
-  const selectedGrade = grades.find(g => g.id === gradeId)
+  const gradeId    = searchParams.get('grade')    ?? grades[0]?.id ?? ''
+  const scheduleId = searchParams.get('schedule') ?? defaultScheduleId
+
+  const selectedGrade    = grades.find(g => g.id === gradeId)
+  const selectedSchedule = schedules.find(s => s.id === scheduleId)
+
+  // Preserve both params when either changes
+  const setGrade    = (id: string) => setSearchParams(p => { p.set('grade',    id); return p })
+  const setSchedule = (id: string) => setSearchParams(p => { p.set('schedule', id); return p })
 
   if (isLoading) {
     return <AppShell title="Grade View"><CenteredSpinner /></AppShell>
@@ -222,11 +229,11 @@ export function GradeViewPage() {
 
   return (
     <AppShell title="Grade View">
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex flex-wrap items-end gap-4 mb-6">
         <Select
           label="Grade"
           value={gradeId}
-          onChange={e => setSearchParams({ grade: e.target.value })}
+          onChange={e => setGrade(e.target.value)}
           className="w-48"
         >
           <option value="">Select grade…</option>
@@ -234,22 +241,35 @@ export function GradeViewPage() {
             <option key={g.id} value={g.id}>Grade {g.number}</option>
           ))}
         </Select>
-        {activeSchedule && (
-          <div className="flex items-center gap-2 mt-5">
-            <span className="text-[12px] text-[var(--text-3)]">Schedule:</span>
-            <Badge variant={activeSchedule.state === ScheduleState.PUBLISHED ? 'published' : 'draft'}>
-              {activeSchedule.name}
+
+        <Select
+          label="Schedule"
+          value={scheduleId}
+          onChange={e => setSchedule(e.target.value)}
+          className="w-64"
+        >
+          {schedules.map(s => (
+            <option key={s.id} value={s.id}>
+              {s.name}{s.state === ScheduleState.PUBLISHED ? ' ★' : ''}
+            </option>
+          ))}
+        </Select>
+
+        {selectedSchedule && (
+          <div className="mb-0.5">
+            <Badge variant={selectedSchedule.state === ScheduleState.PUBLISHED ? 'published' : 'draft'}>
+              {selectedSchedule.state === ScheduleState.PUBLISHED ? 'Published' : 'Draft'}
             </Badge>
           </div>
         )}
       </div>
 
-      {selectedGrade && activeSchedule ? (
+      {selectedGrade && scheduleId ? (
         <>
           <h2 className="text-[16px] font-semibold text-[var(--text-1)] mb-2">
             Grade {selectedGrade.number}
           </h2>
-          <GradeGrid gradeId={gradeId} scheduleId={activeSchedule.id} />
+          <GradeGrid gradeId={gradeId} scheduleId={scheduleId} />
         </>
       ) : (
         <p className="text-[var(--text-3)] text-[13px]">Select a grade to view its schedule.</p>

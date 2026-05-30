@@ -59,16 +59,19 @@ entriesRouter.post('/:id/entries', requireAuth, requireAdmin, async (req, res, n
       day: z.enum(['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY']),
       slot: z.number().int().min(1).max(10),
       roomId: z.string().uuid().optional(),
+      roomId2: z.string().uuid().optional(),
       overrides: z.array(overrideSchema).optional(),
     }).parse(req.body)
 
-    // Auto-assign room if not provided
-    const roomId = body.roomId ?? await autoAssignRoom({
+    // Auto-assign rooms if not provided (PARALLEL gets two)
+    const assigned = await autoAssignRoom({
       scheduleId,
       lessonId: body.lessonId,
       day: body.day,
       slot: body.slot,
     })
+    const roomId  = body.roomId  !== undefined ? body.roomId  : assigned.roomId
+    const roomId2 = body.roomId2 !== undefined ? body.roomId2 : assigned.roomId2
 
     const entry = await prisma.scheduleEntry.create({
       data: {
@@ -76,7 +79,8 @@ entriesRouter.post('/:id/entries', requireAuth, requireAdmin, async (req, res, n
         lessonId: body.lessonId,
         day: body.day,
         slot: body.slot,
-        roomId: roomId ?? null,
+        roomId:  roomId  ?? null,
+        roomId2: roomId2 ?? null,
         overrides: body.overrides ? {
           create: body.overrides.map(o => ({
             restrictionType: o.restrictionType as any,
@@ -104,24 +108,37 @@ entriesRouter.patch('/:id/entries/:entryId', requireAuth, requireAdmin, async (r
       day: z.enum(['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY']),
       slot: z.number().int().min(1).max(10),
       roomId: z.string().uuid().nullable().optional(),
+      roomId2: z.string().uuid().nullable().optional(),
       overrides: z.array(overrideSchema).optional(),
     }).parse(req.body)
 
-    // Resolve room: if roomId explicitly null → clear it; if undefined → auto-assign
+    // Resolve rooms: null clears, undefined auto-assigns, explicit value wins
+    const existing = await prisma.scheduleEntry.findUniqueOrThrow({ where: { id: entryId } })
     let roomId: string | null
+    let roomId2: string | null
+
     if (body.roomId === null) {
       roomId = null
     } else if (body.roomId !== undefined) {
       roomId = body.roomId
     } else {
-      const existing = await prisma.scheduleEntry.findUniqueOrThrow({ where: { id: entryId } })
-      roomId = await autoAssignRoom({
+      const assigned = await autoAssignRoom({
         scheduleId,
         lessonId: existing.lessonId,
         day: body.day,
         slot: body.slot,
         excludeEntryId: entryId,
-      }) ?? existing.roomId
+      })
+      roomId  = assigned.roomId  ?? existing.roomId
+      roomId2 = assigned.roomId2 ?? existing.roomId2
+    }
+
+    if (body.roomId2 === null) {
+      roomId2 = null
+    } else if (body.roomId2 !== undefined) {
+      roomId2 = body.roomId2
+    } else {
+      roomId2 ??= existing.roomId2
     }
 
     const entry = await prisma.scheduleEntry.update({
@@ -130,6 +147,7 @@ entriesRouter.patch('/:id/entries/:entryId', requireAuth, requireAdmin, async (r
         day: body.day,
         slot: body.slot,
         roomId,
+        roomId2,
         // Replace overrides if provided
         ...(body.overrides && {
           overrides: {
@@ -166,10 +184,16 @@ entriesRouter.delete('/:id/entries/:entryId', requireAuth, requireAdmin, async (
 entriesRouter.patch('/:id/entries/:entryId/room', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const { entryId } = req.params
-    const { roomId } = z.object({ roomId: z.string().uuid().nullable() }).parse(req.body)
+    const body = z.object({
+      roomId:  z.string().uuid().nullable().optional(),
+      roomId2: z.string().uuid().nullable().optional(),
+    }).parse(req.body)
     const entry = await prisma.scheduleEntry.update({
       where: { id: entryId },
-      data: { roomId },
+      data: {
+        ...(body.roomId  !== undefined && { roomId:  body.roomId }),
+        ...(body.roomId2 !== undefined && { roomId2: body.roomId2 }),
+      },
       include: { overrides: true },
     })
     res.json(entry)
@@ -191,6 +215,38 @@ entriesRouter.post('/:id/entries/:entryId/override', requireAuth, requireAdmin, 
       },
     })
     res.status(201).json(override)
+  } catch (err) { next(err) }
+})
+
+// ─── Remove override ──────────────────────────────────────────
+
+/**
+ * DELETE /api/schedules/:id/entries/:entryId/override
+ * Body: { restrictionType, restrictionId? }
+ *
+ * Deletes any matching Override record(s) from the entry, then returns a
+ * fresh EvaluationResult so the client can update the violation panel.
+ */
+entriesRouter.delete('/:id/entries/:entryId/override', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const { id: scheduleId, entryId } = req.params
+    const { restrictionType, restrictionId } = z.object({
+      restrictionType: z.string(),
+      restrictionId: z.string().uuid().nullable().optional(),
+    }).parse(req.body)
+
+    await prisma.override.deleteMany({
+      where: {
+        entryId,
+        restrictionType: restrictionType as any,
+        // Only match on restrictionId when one is provided — hard invariant
+        // overrides have no restrictionId so we only match by type.
+        ...(restrictionId != null ? { restrictionId } : {}),
+      },
+    })
+
+    const evalResult = await runEvaluation(scheduleId)
+    res.json({ evaluation: evalResult })
   } catch (err) { next(err) }
 })
 
@@ -217,13 +273,22 @@ async function runEvaluation(scheduleId: string) {
       where: { id: scheduleId },
       include: { entries: { include: { overrides: true } } },
     }),
-    prisma.lesson.findMany({ include: { classes: true, subject: true, grade: true } }),
+    prisma.lesson.findMany({ include: { classes: true, subject: true, grade: true, lessonTeachers: true } }),
     prisma.restriction.findMany({ where: { isActive: true } }),
     prisma.schoolConfig.findFirst(),
   ])
 
+  // The evaluator expects each entry to carry its lesson object inline
+  // (entry.lesson.teacherId, entry.lesson.classes, etc.).
+  // The Prisma query above only fetches overrides, not lessons, so we
+  // join them here using the already-fetched lessons array.
+  const lessonMap = new Map(lessons.map(l => [l.id, l]))
+  const enrichedEntries = schedule.entries
+    .map(e => ({ ...e, lesson: lessonMap.get(e.lessonId) }))
+    .filter(e => e.lesson != null)  // skip orphaned entries (lesson was deleted)
+
   return evaluate({
-    entries: schedule.entries as any,
+    entries: enrichedEntries as any,
     lessons: lessons as any,
     restrictions: restrictions as any,
     config: config as any,

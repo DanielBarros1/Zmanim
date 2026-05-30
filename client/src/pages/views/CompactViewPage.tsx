@@ -45,7 +45,7 @@ export function CompactViewPage() {
 
   const subjectMap = Object.fromEntries(subjects.map(s => [s.id, s]))
   const lessonMap = Object.fromEntries(lessons.map(l => [l.id, l]))
-  const gradeMap = Object.fromEntries(grades.map(g => [g.id, g]))
+  // gradeMap reserved for future grade-label display
 
   const workDays = (config?.workDays ?? DAY_ORDER) as Day[]
   const slots = config ? Array.from({ length: config.slotsPerDay }, (_, i) => i + 1) : []
@@ -104,13 +104,13 @@ export function CompactViewPage() {
       }
     >
       <div className="overflow-auto">
-        <table className="border-collapse text-[10px]" style={{ minWidth: 900 }}>
+        <table className="border-collapse text-[11px]" style={{ minWidth: 1100 }}>
           <thead>
             {/* Day × slot header */}
             <tr style={{ background: 'var(--surface-2)' }}>
               <th
-                className="text-left px-2 py-1.5 text-[9px] font-bold uppercase"
-                style={{ color: 'var(--text-3)', borderBottom: '2px solid var(--border)', borderRight: '1px solid var(--border)', width: 60 }}
+                className="text-left px-3 py-2 text-[10px] font-bold uppercase"
+                style={{ color: 'var(--text-3)', borderBottom: '3px solid var(--border)', borderRight: '3px solid var(--border)', width: 72 }}
               >
                 Class
               </th>
@@ -118,16 +118,20 @@ export function CompactViewPage() {
                 slots.map(slot => (
                   <th
                     key={`${day}-${slot}`}
-                    className="text-center px-1 py-1.5 text-[9px] font-bold"
+                    className="text-center px-1 py-2 text-[10px] font-bold"
                     style={{
                       color: slot === 1 ? 'var(--text-1)' : 'var(--text-3)',
-                      borderBottom: '2px solid var(--border)',
-                      borderRight: slot === slots[slots.length - 1] ? '2px solid var(--border)' : '1px solid var(--border)',
-                      minWidth: 36,
+                      borderBottom: '3px solid var(--border)',
+                      // Left edge of each day: strong dark separator
+                      borderLeft: slot === 1 ? '3px solid #4B5563' : undefined,
+                      borderRight: slot === slots[slots.length - 1]
+                        ? '3px solid #4B5563'
+                        : '1px solid var(--border)',
+                      minWidth: 52,
                       background: slot === 1 ? 'var(--accent-bg)' : 'var(--surface-2)',
                     }}
                   >
-                    {slot === 1 ? DAY_SHORT[day] : slot}
+                    {slot === 1 ? DAY_SHORT[day] : `S${slot}`}
                   </th>
                 )),
               )}
@@ -140,14 +144,18 @@ export function CompactViewPage() {
                   key={cls.id}
                   style={{
                     background: gradeIdx % 2 === 0 ? 'var(--surface)' : 'var(--surface-2)',
+                    // Thicker border between grades (only on last class of each grade)
+                    borderBottom: clsIdx === gc.length - 1 ? '2px solid var(--border)' : undefined,
                   }}
                 >
                   <td
-                    className="px-2 py-1 font-semibold text-[10px]"
+                    className="px-3 py-1.5 font-bold text-[11px]"
                     style={{
-                      borderBottom: '1px solid var(--border)',
-                      borderRight: '1px solid var(--border)',
-                      color: 'var(--text-2)',
+                      borderBottom: clsIdx === gc.length - 1
+                        ? '2px solid var(--border)'
+                        : '1px solid var(--border)',
+                      borderRight: '3px solid var(--border)',
+                      color: 'var(--text-1)',
                     }}
                   >
                     {grade.number}{cls.section}
@@ -155,29 +163,31 @@ export function CompactViewPage() {
                   {workDays.flatMap(day =>
                     slots.map(slot => {
                       const cell = cellMap[cls.id]?.[day]?.[slot]
+                      const isLastSlot = slot === slots[slots.length - 1]
+                      const isLastClass = clsIdx === gc.length - 1
                       return (
                         <td
                           key={`${day}-${slot}`}
                           className="px-0.5 py-0.5"
                           style={{
-                            borderBottom: '1px solid var(--border)',
-                            borderRight: slot === slots[slots.length - 1] ? '2px solid var(--border)' : '1px solid var(--border)',
-                            height: 32,
-                            width: 36,
+                            borderBottom: isLastClass ? '2px solid #6B7280' : '1px solid var(--border)',
+                            borderLeft:  slot === 1 ? '3px solid #4B5563' : undefined,
+                            borderRight: isLastSlot  ? '3px solid #4B5563' : '1px solid var(--border)',
+                            height: 44,
+                            width: 52,
                           }}
                         >
                           {cell ? (
                             <div
-                              className="w-full h-full rounded-sm flex items-center justify-center text-white text-[8px] font-bold leading-none px-0.5"
+                              className="w-full h-full rounded flex items-center justify-center text-white text-[9px] font-bold leading-tight px-0.5 text-center"
                               style={{ background: cell.color }}
                               title={cell.name}
                             >
-                              {/* Show first 3 Hebrew chars */}
-                              {cell.name.slice(0, 3)}
+                              {cell.name.slice(0, 4)}
                             </div>
                           ) : (
                             <div
-                              className="w-full h-full rounded-sm"
+                              className="w-full h-full rounded"
                               style={{ background: 'var(--empty-bg)' }}
                             />
                           )}

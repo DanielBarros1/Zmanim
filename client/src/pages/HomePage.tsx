@@ -33,9 +33,48 @@ import {
   useDeleteSchedule,
   useCloneSchedule,
   usePublishSchedule,
+  useEvaluation,
 } from '../api/schedules'
 import { ScheduleState } from '@zmanim/shared'
 import type { ScheduleSummary } from '@zmanim/shared'
+
+function ViolationSummary({ scheduleId }: { scheduleId: string }) {
+  const { data: evaluation } = useEvaluation(scheduleId)
+  if (!evaluation || evaluation.counts.total === 0) {
+    return evaluation ? (
+      <span className="text-[11px]" style={{ color: 'var(--ok-text)' }}>✓ No violations</span>
+    ) : null
+  }
+  const { counts } = evaluation
+  return (
+    <div className="flex flex-wrap gap-1.5 items-center">
+      {counts.nonNegotiable > 0 && (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          style={{ background: '#FEE2E2', color: '#991B1B' }}>
+          ⛔ {counts.nonNegotiable}
+        </span>
+      )}
+      {counts.important > 0 && (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          style={{ background: '#FEF3C7', color: '#92400E' }}>
+          ⚠ {counts.important}
+        </span>
+      )}
+      {counts.preferred > 0 && (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          style={{ background: '#DBEAFE', color: '#1E40AF' }}>
+          💛 {counts.preferred}
+        </span>
+      )}
+      {counts.flexible > 0 && (
+        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+          style={{ background: 'var(--surface-2)', color: 'var(--text-3)' }}>
+          {counts.flexible} flexible
+        </span>
+      )}
+    </div>
+  )
+}
 
 function ProgressBar({ placed, total }: { placed: number; total: number }) {
   const pct = total === 0 ? 0 : Math.round((placed / total) * 100)
@@ -156,6 +195,9 @@ function ScheduleCard({
 
       {/* Progress */}
       <ProgressBar placed={schedule.totalPlaced} total={schedule.totalRequired} />
+
+      {/* Violations */}
+      <ViolationSummary scheduleId={schedule.id} />
 
       {/* Action row */}
       <div className="flex gap-2 flex-wrap">

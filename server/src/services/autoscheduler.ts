@@ -2,41 +2,75 @@
  * Auto-scheduler service
  *
  * Implements random-restart penalty-minimization with local search.
- * Runs in a Node.js worker thread to avoid blocking the event loop.
+ *
+ * Runs as an async background task in the main thread (NOT a worker thread).
+ * Worker threads require the same runtime that launched the server — under
+ * `tsx watch` that means the worker would need tsx too, which `new Worker(__filename)`
+ * does not provide.  setImmediate() between restarts keeps the event loop
+ * free enough for polling requests and is perfectly fine for an admin-only tool.
  *
  * Algorithm per restart:
  *   1. Copy seeded entries (immovable anchors)
  *   2. Expand all lessons into placement instances (one per required hour)
  *   3. Randomly assign unplaced instances to (day, slot) combinations
  *   4. Run local search: repeatedly try swapping or moving two entries,
- *      keep the change if it improves the penalty score
+ *      keep the change if it reduces the penalty score
  *   5. Track the best schedule across all restarts
+ *
+ * Seeding:
+ *   When seedScheduleId is provided, ALL entries from that schedule are used
+ *   as fixed anchors (isSeeded = true) so the algorithm never moves them.
+ *   This lets admins preserve a hand-crafted partial schedule and let the
+ *   auto-scheduler fill in the rest.
  *
  * On completion: creates a new DRAFT Schedule in the DB and updates the job record.
  */
 
-import { Worker, isMainThread, parentPort, workerData } from 'worker_threads'
 import { prisma } from '../db'
 import { evaluate } from './evaluator'
 import { DAY_ORDER } from '@zmanim/shared'
 
 // ─── Job tracking (in-memory) ─────────────────────────────────
 
+/** One saved candidate returned to the client when the job completes. */
+export interface CandidateResult {
+  scheduleId: string
+  name: string
+  /** Raw penalty score — lower is better (used for relative ranking only) */
+  score: number
+  violations: {
+    total: number
+    nonNegotiable: number
+    important: number
+    preferred: number
+    flexible: number
+  }
+}
+
 export type JobStatus = {
   jobId: string
   status: 'RUNNING' | 'DONE' | 'ERROR'
-  progress: number   // 0–100
-  scheduleId?: string
+  progress: number        // 0–100
+  statusMessage?: string  // human-readable phase description shown in the modal
+  /** Up to 3 saved candidate schedules (set when status === 'DONE') */
+  candidates?: CandidateResult[]
+  scheduleId?: string     // convenience: candidates[0].scheduleId
   error?: string
 }
 
 const jobs = new Map<string, JobStatus>()
 
+/** Patch a running job's fields without replacing the whole record. */
+function patchJob(jobId: string, patch: Partial<JobStatus>): void {
+  const job = jobs.get(jobId)
+  if (job) Object.assign(job, patch)
+}
+
 export function getJob(jobId: string): JobStatus | undefined {
   return jobs.get(jobId)
 }
 
-// ─── Start a job (main thread) ────────────────────────────────
+// ─── Start a job ───────────────────────────────────────────────
 
 interface JobInput {
   jobId: string
@@ -46,195 +80,842 @@ interface JobInput {
   nIterations: number
 }
 
-export async function startAutoSchedulerJob(input: JobInput): Promise<void> {
-  jobs.set(input.jobId, { jobId: input.jobId, status: 'RUNNING', progress: 0 })
+export function startAutoSchedulerJob(input: JobInput): void {
+  jobs.set(input.jobId, { jobId: input.jobId, status: 'RUNNING', progress: 0, statusMessage: 'Loading data…' })
 
-  // Fetch all data needed by the algorithm
-  const [lessons, restrictions, config, seedEntries] = await Promise.all([
-    prisma.lesson.findMany({ include: { classes: true, subject: true, grade: true } }),
-    prisma.restriction.findMany({ where: { isActive: true } }),
-    prisma.schoolConfig.findFirst(),
-    input.seedScheduleId
-      ? prisma.scheduleEntry.findMany({
-          where: { scheduleId: input.seedScheduleId, isSeeded: true },
-          include: { overrides: true },
-        })
-      : Promise.resolve([]),
-  ])
+  // Fire async without awaiting — the HTTP response is sent before this runs.
+  // setImmediate defers to the next event-loop tick so the 202 reply goes out first.
+  setImmediate(() => runJob(input))
+}
 
-  const slotsPerDay = config?.slotsPerDay ?? 4
+async function runJob(input: JobInput): Promise<void> {
+  try {
+    // ── Load all data the algorithm needs ──────────────────────────
+    const [lessons, restrictions, config, rooms, seedEntries] = await Promise.all([
+      prisma.lesson.findMany({ include: { classes: true, subject: true, grade: true, lessonTeachers: true } }),
+      prisma.restriction.findMany({ where: { isActive: true } }),
+      prisma.schoolConfig.findFirst(),
+      prisma.room.findMany(),
+      input.seedScheduleId
+        ? prisma.scheduleEntry.findMany({
+            where: { scheduleId: input.seedScheduleId },
+            include: { overrides: true },
+          })
+        : Promise.resolve([]),
+    ])
 
-  // Run the algorithm in a worker thread
-  const worker = new Worker(__filename, {
-    workerData: {
-      lessons,
-      restrictions,
-      slotsPerDay,
-      seedEntries,
-      nRestarts: input.nRestarts,
-      nIterations: input.nIterations,
-      jobId: input.jobId,
-    },
-  })
+    const slotsPerDay = config?.slotsPerDay ?? 4
+    const days = config?.workDays?.length ? config.workDays : DAY_ORDER
+    const totalSlotsPerClass = slotsPerDay * days.length
 
-  worker.on('message', async (msg: { type: string; progress?: number; entries?: any[] }) => {
-    if (msg.type === 'progress') {
-      const job = jobs.get(input.jobId)
-      if (job) job.progress = msg.progress ?? 0
+    // ── Expand lessons into individual placement instances ─────────
+    // Each lesson with hoursPerWeek=N generates N independent placements.
+    const instances = expandLessons(lessons)
+
+    // Lessons covered by a seed entry are excluded from the random placement pool.
+    // We use lessonId-level exclusion so multi-hour lessons are fully handled by seeds.
+    const seededLessonIds = new Set(seedEntries.map((e: any) => e.lessonId))
+    const toPlace = instances.filter((inst: any) => !seededLessonIds.has(inst.lessonId))
+
+    // ── Feasibility diagnostics ────────────────────────────────────
+    // For each class, compute total lesson hours (counting group lessons by their
+    // max hours across levels, since all levels run in parallel and consume a single
+    // "class slot").  Warn if any class exceeds the available slot budget.
+    patchJob(input.jobId, { statusMessage: 'Checking feasibility…' })
+
+    console.log(`\n[AutoScheduler] ═══════════════════════════════════════`)
+    console.log(`[AutoScheduler] Job ${input.jobId} — ${input.name}`)
+    console.log(`[AutoScheduler] ${lessons.length} lessons | ${slotsPerDay} slots/day × ${days.length} days = ${totalSlotsPerClass} slots/class`)
+
+    // Group lessons by type for summary
+    const byType = new Map<string, number>()
+    for (const l of lessons) {
+      byType.set(l.type, (byType.get(l.type) ?? 0) + 1)
     }
+    console.log(`[AutoScheduler] Lesson types: ${[...byType.entries()].map(([t, n]) => `${t}×${n}`).join(', ')}`)
 
-    if (msg.type === 'result' && msg.entries) {
-      try {
-        // Create the new DRAFT schedule with all computed entries
-        const schedule = await prisma.schedule.create({
-          data: {
-            name: input.name,
-            state: 'DRAFT',
-            entries: {
-              create: msg.entries.map((e: any) => ({
-                lessonId: e.lessonId,
-                day: e.day,
-                slot: e.slot,
-                roomId: e.roomId ?? null,
-                isSeeded: e.isSeeded ?? false,
-              })),
-            },
-          },
-        })
-        jobs.set(input.jobId, {
-          jobId: input.jobId,
-          status: 'DONE',
-          progress: 100,
-          scheduleId: schedule.id,
-        })
-      } catch (err: any) {
-        jobs.set(input.jobId, {
-          jobId: input.jobId,
-          status: 'ERROR',
-          progress: 0,
-          error: err.message,
-        })
+    // Compute per-class hour demand (group lessons contribute max hrs, not sum)
+    const regularHoursPerClass = new Map<string, number>()
+    const groupHoursByGradeType = new Map<string, number>()  // "gradeId:type" → max hrs
+
+    for (const l of lessons) {
+      if (l.type === 'MATH_GROUP' || l.type === 'ENGLISH_GROUP') {
+        const key = `${l.gradeId}:${l.type}`
+        groupHoursByGradeType.set(key, Math.max(groupHoursByGradeType.get(key) ?? 0, l.hoursPerWeek))
+      } else {
+        for (const cls of l.classes) {
+          regularHoursPerClass.set(cls.id, (regularHoursPerClass.get(cls.id) ?? 0) + l.hoursPerWeek)
+        }
       }
     }
-  })
 
-  worker.on('error', (err) => {
+    // Map class → grade for group hour attribution
+    const classGradeMap = new Map<string, string>()
+    for (const l of lessons) {
+      for (const cls of l.classes) classGradeMap.set(cls.id, cls.gradeId)
+    }
+
+    let anyInfeasible = false
+    for (const [classId, regularHrs] of regularHoursPerClass) {
+      const gradeId = classGradeMap.get(classId) ?? ''
+      const mathHrs   = groupHoursByGradeType.get(`${gradeId}:MATH_GROUP`)    ?? 0
+      const englishHrs = groupHoursByGradeType.get(`${gradeId}:ENGLISH_GROUP`) ?? 0
+      const total = regularHrs + mathHrs + englishHrs
+      const status = total > totalSlotsPerClass ? '❌ INFEASIBLE' : total > totalSlotsPerClass * 0.9 ? '⚠ TIGHT' : '✓'
+      if (total > totalSlotsPerClass) anyInfeasible = true
+      console.log(`[AutoScheduler]   Class ${classId.slice(-6)}: ${regularHrs} regular + ${mathHrs} math-group + ${englishHrs} english-group = ${total}/${totalSlotsPerClass} slots  ${status}`)
+    }
+    if (anyInfeasible) {
+      console.warn(`[AutoScheduler] ⚠ Some classes are INFEASIBLE — violations will remain regardless of iterations`)
+    }
+    console.log(`[AutoScheduler] ───────────────────────────────────────`)
+
+    // ── Top-3 candidate tracking ──────────────────────────────────
+    // We keep the three best restarts so the admin can compare them.
+    // Ranking is the same five-level lexicographic criterion used for the
+    // single-best case: invariants → classConflicts → gradeSyncConflicts →
+    // hardCount → score.
+    interface Candidate {
+      entries: any[]
+      score: number
+      hardCount: number
+      classConflicts: number
+      gradeSyncConflicts: number
+      invariantCount: number
+    }
+    const topCandidates: Candidate[] = []
+
+    function candidateRank(a: Candidate, b: Candidate): number {
+      if (a.invariantCount      !== b.invariantCount)      return a.invariantCount      - b.invariantCount
+      if (a.classConflicts      !== b.classConflicts)      return a.classConflicts      - b.classConflicts
+      if (a.gradeSyncConflicts  !== b.gradeSyncConflicts)  return a.gradeSyncConflicts  - b.gradeSyncConflicts
+      if (a.hardCount           !== b.hardCount)           return a.hardCount           - b.hardCount
+      return a.score - b.score
+    }
+
+    function insertTopCandidate(c: Candidate): void {
+      // Always insert if fewer than 3; otherwise only if better than the current worst
+      if (topCandidates.length >= 3 && candidateRank(c, topCandidates[topCandidates.length - 1]) >= 0) return
+      topCandidates.push(c)
+      topCandidates.sort(candidateRank)
+      if (topCandidates.length > 3) topCandidates.pop()
+    }
+
+    // Convenience accessors for diagnostic logging (derived from the current best)
+    const bestStats = () => topCandidates[0] ?? { invariantCount: Infinity, classConflicts: Infinity, gradeSyncConflicts: Infinity, hardCount: Infinity, score: Infinity }
+
+    // Backtracking diagnostics — used to build an informative error if all restarts fail.
+    let nSkippedRestarts    = 0  // restarts where backtracking returned null (timed-out OR infeasible)
+    let nInfeasibleRestarts = 0  // restarts where backtracking PROVED infeasibility (not timed out)
+
+    // ── Main loop: nRestarts × nIterations ────────────────────────
+    for (let restart = 0; restart < input.nRestarts; restart++) {
+      patchJob(input.jobId, {
+        statusMessage: `Restart ${restart + 1}/${input.nRestarts} — placing groups…`,
+        progress: Math.round((restart / input.nRestarts) * 95),  // reserve last 5% for finalization
+      })
+
+      // Step 1: Fixed seed entries (all entries from the chosen schedule)
+      let entries: any[] = seedEntries.map((se: any) => ({
+        id: `seed-${se.id}`,
+        lessonId: se.lessonId,
+        day: se.day,
+        slot: se.slot,
+        roomId:  se.roomId  ?? null,
+        roomId2: se.roomId2 ?? null,
+        isSeeded: true,
+        overrides: se.overrides ?? [],
+        lesson: lessons.find((l: any) => l.id === se.lessonId),
+      })).filter((e: any) => e.lesson)  // drop any orphan entries
+
+      // Step 2: Greedy initial placement — hard-constraint-aware.
+      //
+      // Phase A  — Synchronized groups (MATH_GROUP / ENGLISH_GROUP per grade)
+      //   All level groups for the same subject+grade MUST occupy the SAME set
+      //   of (day, slot) pairs (invariant D3/D4).  We place them together first:
+      //   find slots where ALL the group's teachers are free, then assign every
+      //   group lesson instance of that "slot index" to the same slot.
+      //
+      // Phase B  — Everything else (REGULAR / SHARED)
+      //   Greedily find a (day, slot) per instance where neither the teacher
+      //   nor any of the lesson's classes are already occupied (D1/D2).
+
+      const lessonUsedSlots       = new Map<string, Set<string>>()
+      const occupiedTeacher       = new Set<string>()   // "teacherId:day:slot"
+      const occupiedClass         = new Set<string>()   // "classId:day:slot"
+      // Subset of occupiedClass: only slots taken by MATH_GROUP / ENGLISH_GROUP lessons.
+      const groupOccupiedSlots    = new Set<string>()   // "classId:day:slot" — group lessons only
+      // D7 tracking: "subjectId:classId:day"
+      const subjectOnClassDay     = new Set<string>()
+      // Specialized room saturation: "specializedRoomId:day:slot"
+      // Prevents two lessons requiring the same lab/studio from landing on the same slot.
+      const occupiedSpecializedRoom = new Set<string>()
+
+      // Seed occupancy maps from fixed seed entries
+      for (const se of entries) {
+        const lesson = se.lesson
+        if (!lesson) continue
+        if (!lessonUsedSlots.has(se.lessonId)) lessonUsedSlots.set(se.lessonId, new Set())
+        lessonUsedSlots.get(se.lessonId)!.add(`${se.day}:${se.slot}`)
+        for (const tid of lessonTeacherIds(lesson)) {
+          occupiedTeacher.add(`${tid}:${se.day}:${se.slot}`)
+        }
+        for (const cls of lesson.classes) {
+          occupiedClass.add(`${cls.id}:${se.day}:${se.slot}`)
+          subjectOnClassDay.add(`${lesson.subjectId}:${cls.id}:${se.day}`)
+        }
+        const specialRoomId = lesson.subject?.specializedRoomId
+        if (specialRoomId) occupiedSpecializedRoom.add(`${specialRoomId}:${se.day}:${se.slot}`)
+      }
+
+      // All (day, slot) combos — shuffled fresh each restart for variety
+      const allSlots: Array<{ day: string; slot: number }> = []
+      for (const d of days) for (let s = 1; s <= slotsPerDay; s++) allSlots.push({ day: d, slot: s })
+
+      // ── Phase A: synchronized group placement ─────────────────
+
+      // Collect sync-group instances: Map key = "MATH_GROUP:gradeId" or "ENGLISH_GROUP:gradeId"
+      const syncGroupMap = new Map<string, Array<{ lessonId: string; lesson: any }>>()
+      const syncGroupLessonIds = new Set<string>()
+
+      for (const inst of toPlace) {
+        const { type, gradeId } = inst.lesson
+        if ((type !== 'MATH_GROUP' && type !== 'ENGLISH_GROUP') || !gradeId) continue
+        const key = `${type}:${gradeId}`
+        if (!syncGroupMap.has(key)) syncGroupMap.set(key, [])
+        syncGroupMap.get(key)!.push(inst)
+        syncGroupLessonIds.add(inst.lessonId)
+      }
+
+      for (const [, groupInstances] of syncGroupMap) {
+        // Distinct lessonIds in this group and their instances, in stable order
+        const instancesByLesson = new Map<string, Array<{ lessonId: string; lesson: any }>>()
+        for (const inst of groupInstances) {
+          if (!instancesByLesson.has(inst.lessonId)) instancesByLesson.set(inst.lessonId, [])
+          instancesByLesson.get(inst.lessonId)!.push(inst)
+        }
+
+        // Number of simultaneous slots needed = max hoursPerWeek in the group
+        const requiredSlots = Math.max(...[...instancesByLesson.values()].map(v => v.length))
+
+        // All teachers in this group (one per lesson)
+        const groupTeachers = [...instancesByLesson.keys()].map(
+          lid => instancesByLesson.get(lid)![0].lesson.teacherId,
+        )
+
+        // Classes shared by all lessons in the group (they're the same — both classes of the grade)
+        const groupClasses: string[] = groupInstances[0].lesson.classes.map((c: any) => c.id)
+
+        // Find `requiredSlots` simultaneous slots where every group teacher is free
+        // and the shared classes aren't occupied by other (non-group) lessons.
+        const groupSubjectId    = groupInstances[0].lesson.subjectId
+        const groupSpecialRoomId = groupInstances[0]?.lesson?.subject?.specializedRoomId
+        const candidateSlots = [...allSlots].sort(() => Math.random() - 0.5)
+        const chosenSlots: Array<{ day: string; slot: number }> = []
+        const chosenKeys  = new Set<string>()
+
+        for (const { day, slot } of candidateSlots) {
+          if (chosenSlots.length >= requiredSlots) break
+          const key = `${day}:${slot}`
+          if (chosenKeys.has(key)) continue
+
+          // All group teachers must be free
+          if (groupTeachers.some(tid => occupiedTeacher.has(`${tid}:${day}:${slot}`))) continue
+
+          // Classes must not be occupied by non-group lessons
+          if (groupClasses.some(cid => occupiedClass.has(`${cid}:${day}:${slot}`))) continue
+
+          // No same subject on the same day for any class in the group (D7)
+          if (groupClasses.some(cid => subjectOnClassDay.has(`${groupSubjectId}:${cid}:${day}`))) continue
+
+          // Specialized room must not already be claimed at this slot
+          if (groupSpecialRoomId && occupiedSpecializedRoom.has(`${groupSpecialRoomId}:${day}:${slot}`)) continue
+
+          chosenSlots.push({ day, slot })
+          chosenKeys.add(key)
+        }
+
+        // Fallback tier 1: relax teacher/class checks but keep D7 and specialized-room guards.
+        if (chosenSlots.length < requiredSlots) {
+          for (const { day, slot } of candidateSlots) {
+            if (chosenSlots.length >= requiredSlots) break
+            const key = `${day}:${slot}`
+            if (chosenKeys.has(key)) continue
+            if (groupClasses.some(cid => subjectOnClassDay.has(`${groupSubjectId}:${cid}:${day}`))) continue
+            if (groupSpecialRoomId && occupiedSpecializedRoom.has(`${groupSpecialRoomId}:${day}:${slot}`)) continue
+            chosenSlots.push({ day, slot })
+            chosenKeys.add(key)
+          }
+        }
+
+        // Fallback tier 2: relax teacher/class AND D7, but still guard specialized room.
+        // A specialized-room conflict can never be fixed by local search — skip the slot entirely.
+        if (chosenSlots.length < requiredSlots) {
+          for (const { day, slot } of candidateSlots) {
+            if (chosenSlots.length >= requiredSlots) break
+            const key = `${day}:${slot}`
+            if (chosenKeys.has(key)) continue
+            if (groupSpecialRoomId && occupiedSpecializedRoom.has(`${groupSpecialRoomId}:${day}:${slot}`)) continue
+            chosenSlots.push({ day, slot })
+            chosenKeys.add(key)
+          }
+        }
+
+        // Fallback tier 3 (absolute last resort): any unused slot.
+        if (chosenSlots.length < requiredSlots) {
+          for (const { day, slot } of candidateSlots) {
+            if (chosenSlots.length >= requiredSlots) break
+            const key = `${day}:${slot}`
+            if (!chosenKeys.has(key)) { chosenSlots.push({ day, slot }); chosenKeys.add(key) }
+          }
+        }
+
+        // Assign: instance[i] of every lesson → chosenSlots[i]  (keeps groups simultaneous)
+        for (const [lessonId, lessonInstances] of instancesByLesson) {
+          if (!lessonUsedSlots.has(lessonId)) lessonUsedSlots.set(lessonId, new Set())
+          const usedByLesson = lessonUsedSlots.get(lessonId)!
+
+          lessonInstances.forEach((inst, i) => {
+            const { day, slot } = chosenSlots[Math.min(i, chosenSlots.length - 1)]
+            usedByLesson.add(`${day}:${slot}`)
+            entries.push({
+              id: `gen-${lessonId}-${restart}-${Math.random()}`,
+              lessonId,
+              day,
+              slot,
+              roomId: null,
+              isSeeded: false,
+              overrides: [],
+              lesson: inst.lesson,
+            })
+          })
+        }
+
+        // Mark chosen slots as occupied so regular lessons route around them
+        for (const { day, slot } of chosenSlots) {
+          for (const tid of groupTeachers) occupiedTeacher.add(`${tid}:${day}:${slot}`)
+          for (const cid of groupClasses) {
+            occupiedClass.add(`${cid}:${day}:${slot}`)
+            groupOccupiedSlots.add(`${cid}:${day}:${slot}`)   // ← group-only tracking
+            subjectOnClassDay.add(`${groupSubjectId}:${cid}:${day}`)  // ← D7 tracking
+          }
+          if (groupSpecialRoomId) occupiedSpecializedRoom.add(`${groupSpecialRoomId}:${day}:${slot}`)
+        }
+      }
+
+      // ── Phase A': LESSON_GRADE_SYNC lessons ───────────────────
+      //
+      // Any lesson covered by a LESSON_GRADE_SYNC restriction must be placed at
+      // the SAME (day, slot) as all other lessons for that (subject, grade) pair.
+      // These are REGULAR lessons (each class has its own teacher/room) but the
+      // school requires them to run in parallel (e.g. homeroom / חינוך).
+      //
+      // We place them all at a shared slot before Phase B so they start in sync.
+      // The LESSON_GRADE_SYNC restriction (NON_NEGOTIABLE) then prevents local
+      // search from splitting them up, since breaking sync raises hardCount.
+
+      const gradeSyncLessonIds = new Set<string>()
+
+      // Build (subjectId:gradeId) → restriction list
+      const gradeSyncMap = new Map<string, any>()  // key → restriction
+      for (const r of restrictions) {
+        if (r.type !== 'LESSON_GRADE_SYNC' || !r.subjectId || !r.gradeId) continue
+        gradeSyncMap.set(`${r.subjectId}:${r.gradeId}`, r)
+      }
+
+      for (const [key, r] of gradeSyncMap) {
+        const [subjectId, gradeId] = key.split(':')
+
+        // Find all REGULAR or PARALLEL instances for this subject whose class belongs to this grade
+        const syncInstances = toPlace.filter(inst =>
+          inst.lesson.subjectId === subjectId &&
+          (inst.lesson.type === 'REGULAR' || inst.lesson.type === 'PARALLEL') &&
+          inst.lesson.classes.some((c: any) => c.gradeId === gradeId),
+        )
+        if (syncInstances.length === 0) continue
+
+        // Group by lesson
+        const instancesByLesson = new Map<string, any[]>()
+        for (const inst of syncInstances) {
+          if (!instancesByLesson.has(inst.lessonId)) instancesByLesson.set(inst.lessonId, [])
+          instancesByLesson.get(inst.lessonId)!.push(inst)
+          gradeSyncLessonIds.add(inst.lessonId)
+        }
+
+        // Number of shared slots needed = max hoursPerWeek among matching lessons
+        const requiredSlots = Math.max(...[...instancesByLesson.values()].map(v => v.length))
+
+        // Collect all teachers and classes in this sync group
+        // Use lessonTeacherIds to handle PARALLEL lessons (no primary teacherId)
+        const syncTeacherSet = new Set<string>()
+        for (const lid of instancesByLesson.keys()) {
+          for (const tid of lessonTeacherIds(instancesByLesson.get(lid)![0].lesson)) {
+            syncTeacherSet.add(tid)
+          }
+        }
+        const syncTeachers = [...syncTeacherSet]
+        const syncClasses: string[] = syncInstances.flatMap(inst =>
+          inst.lesson.classes.map((c: any) => c.id),
+        ).filter((id, i, arr) => arr.indexOf(id) === i)  // deduplicate
+
+        // Find slots where every teacher AND every class is free
+        const syncSubjectId    = syncInstances[0].lesson.subjectId
+        const syncSpecialRoomId = syncInstances[0].lesson.subject?.specializedRoomId
+        const candidateSlots = [...allSlots].sort(() => Math.random() - 0.5)
+        const chosenSlots: Array<{ day: string; slot: number }> = []
+        const chosenKeys  = new Set<string>()
+
+        for (const { day, slot } of candidateSlots) {
+          if (chosenSlots.length >= requiredSlots) break
+          const slotKey = `${day}:${slot}`
+          if (chosenKeys.has(slotKey)) continue
+          if (syncTeachers.some(tid => occupiedTeacher.has(`${tid}:${day}:${slot}`))) continue
+          if (syncClasses.some(cid => occupiedClass.has(`${cid}:${day}:${slot}`))) continue
+          // No same subject on the same day for any sync class (D7)
+          if (syncClasses.some(cid => subjectOnClassDay.has(`${syncSubjectId}:${cid}:${day}`))) continue
+          // Specialized room must not already be claimed at this slot
+          if (syncSpecialRoomId && occupiedSpecializedRoom.has(`${syncSpecialRoomId}:${day}:${slot}`)) continue
+          chosenSlots.push({ day, slot })
+          chosenKeys.add(slotKey)
+        }
+
+        // Fallback tier 1: relax teacher/class checks but keep D7 and specialized-room guards.
+        if (chosenSlots.length < requiredSlots) {
+          for (const { day, slot } of candidateSlots) {
+            if (chosenSlots.length >= requiredSlots) break
+            const slotKey = `${day}:${slot}`
+            if (chosenKeys.has(slotKey)) continue
+            if (syncClasses.some(cid => subjectOnClassDay.has(`${syncSubjectId}:${cid}:${day}`))) continue
+            if (syncSpecialRoomId && occupiedSpecializedRoom.has(`${syncSpecialRoomId}:${day}:${slot}`)) continue
+            chosenSlots.push({ day, slot })
+            chosenKeys.add(slotKey)
+          }
+        }
+
+        // Fallback tier 2: relax teacher/class AND D7, but still guard specialized room.
+        if (chosenSlots.length < requiredSlots) {
+          for (const { day, slot } of candidateSlots) {
+            if (chosenSlots.length >= requiredSlots) break
+            const slotKey = `${day}:${slot}`
+            if (chosenKeys.has(slotKey)) continue
+            if (syncSpecialRoomId && occupiedSpecializedRoom.has(`${syncSpecialRoomId}:${day}:${slot}`)) continue
+            chosenSlots.push({ day, slot })
+            chosenKeys.add(slotKey)
+          }
+        }
+
+        // Fallback tier 3 (absolute last resort): any unused slot.
+        if (chosenSlots.length < requiredSlots) {
+          for (const { day, slot } of candidateSlots) {
+            if (chosenSlots.length >= requiredSlots) break
+            const slotKey = `${day}:${slot}`
+            if (!chosenKeys.has(slotKey)) { chosenSlots.push({ day, slot }); chosenKeys.add(slotKey) }
+          }
+        }
+
+        // Place all lessons at their shared slots
+        for (const [lessonId, lessonInstances] of instancesByLesson) {
+          if (!lessonUsedSlots.has(lessonId)) lessonUsedSlots.set(lessonId, new Set())
+          const usedByLesson = lessonUsedSlots.get(lessonId)!
+
+          lessonInstances.forEach((inst, i) => {
+            const { day, slot } = chosenSlots[Math.min(i, chosenSlots.length - 1)]
+            usedByLesson.add(`${day}:${slot}`)
+            entries.push({
+              id: `gen-${lessonId}-${restart}-${Math.random()}`,
+              lessonId,
+              day,
+              slot,
+              roomId: null,
+              isSeeded: false,
+              overrides: [],
+              lesson: inst.lesson,
+            })
+          })
+        }
+
+        // Mark occupancy — each class is blocked at the chosen slots
+        // (do NOT add to groupOccupiedSlots: students don't switch classes, so other
+        //  regular lessons for OTHER classes are not affected by this slot choice)
+        for (const { day, slot } of chosenSlots) {
+          for (const tid of syncTeachers) occupiedTeacher.add(`${tid}:${day}:${slot}`)
+          for (const cid of syncClasses) {
+            occupiedClass.add(`${cid}:${day}:${slot}`)
+            subjectOnClassDay.add(`${syncSubjectId}:${cid}:${day}`)  // ← D7 tracking
+          }
+          if (syncSpecialRoomId) occupiedSpecializedRoom.add(`${syncSpecialRoomId}:${day}:${slot}`)
+        }
+      }
+
+      // ── Phase B: backtracking CSP placement ──────────────────
+      //
+      // Replace the old greedy random placement with a proper constraint-
+      // satisfaction search.  The backtracker guarantees zero hard-invariant
+      // violations (D1/D2/D7) in the initial placement so local search starts
+      // from a clean state every time.
+      //
+      // If backtracking fails (infeasible or timed out) this restart is skipped.
+      // Tracking across restarts tells us whether the problem is provably
+      // infeasible or merely hard for a particular random ordering.
+
+      const remaining = toPlace.filter(inst =>
+        !syncGroupLessonIds.has(inst.lessonId) && !gradeSyncLessonIds.has(inst.lessonId),
+      )
+
+      // Build count-map occupancy from Phase A/A' Sets.
+      const initOcc: BacktrackOcc = {
+        teacherSlot: new Map([...occupiedTeacher].map(k => [k, 1])),
+        classSlot:   new Map([...occupiedClass].map(k => [k, 1])),
+        lessonAtSlot: new Map(
+          [...lessonUsedSlots.entries()].flatMap(([lid, slots]) =>
+            [...slots].map(s => [`${lid}:${s}`, 1]),
+          ),
+        ),
+        subjectClassDay:     new Map([...subjectOnClassDay].map(k => [k, 1])),
+        specializedRoomSlot: new Map([...occupiedSpecializedRoom].map(k => [k, 1])),
+        groupClassSlot:      groupOccupiedSlots,
+      }
+
+      // Pre-shuffle so equal-MRV-count lessons vary across restarts.
+      const shuffledRemaining = fisherYates([...remaining])
+      patchJob(input.jobId, { statusMessage: `Restart ${restart + 1}/${input.nRestarts} — backtracking (${remaining.length} lessons)…` })
+      const deadline = Date.now() + BACKTRACK_TIMEOUT_MS
+      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart)
+
+      if (!btResult.ok) {
+        const reason = btResult.timedOut ? 'timed out' : 'proved infeasible'
+        patchJob(input.jobId, { statusMessage: `Restart ${restart + 1}/${input.nRestarts} — skipped (${reason})` })
+        console.log(`[AutoScheduler] Restart ${String(restart + 1).padStart(2)}: backtracking ${reason} — skipping`)
+        if (!btResult.timedOut) nInfeasibleRestarts++
+        nSkippedRestarts++
+        continue  // skip local search for this restart
+      }
+
+      patchJob(input.jobId, { statusMessage: `Restart ${restart + 1}/${input.nRestarts} — optimizing (${input.nIterations.toLocaleString()} steps)…` })
+
+      entries.push(...btResult.entries)
+
+      // Sync the Phase-A/A' occupancy Sets with the backtracking result so
+      // local search (which uses the Sets directly) sees a consistent state.
+      for (const e of btResult.entries) {
+        const lesson = e.lesson
+        if (!lessonUsedSlots.has(e.lessonId)) lessonUsedSlots.set(e.lessonId, new Set())
+        lessonUsedSlots.get(e.lessonId)!.add(`${e.day}:${e.slot}`)
+        for (const tid of lessonTeacherIds(lesson)) occupiedTeacher.add(`${tid}:${e.day}:${e.slot}`)
+        for (const cls of lesson.classes) {
+          occupiedClass.add(`${cls.id}:${e.day}:${e.slot}`)
+          subjectOnClassDay.add(`${lesson.subjectId}:${cls.id}:${e.day}`)
+        }
+        const specialRoomId = lesson.subject?.specializedRoomId
+        if (specialRoomId) occupiedSpecializedRoom.add(`${specialRoomId}:${e.day}:${e.slot}`)
+      }
+
+      // Step 3: Local search — lexicographic hill climbing.
+      //
+      // Three-level acceptance criterion (in priority order):
+      //   1. Fewer CLASS_DOUBLE_BOOKED violations  →  always accept
+      //      (class conflicts are a physical impossibility and take strict priority)
+      //   2. Fewer other NON_NEGOTIABLE violations →  accept when level 1 is tied
+      //   3. Lower total penalty score             →  accept when levels 1+2 are tied
+      //
+      // Additionally, two candidate-rejection guards run BEFORE scoring:
+      //   • hasDuplicateLessonSlots  — prevents the DB unique constraint from firing
+      //   • hasRegularAtGroupSlot    — absolute invariant: no student can be in a
+      //     regular class and a level-group class simultaneously
+      //
+      // CLASS_DOUBLE_BOOKED and LESSON_GRADE_SYNC are tracked independently of the
+      // general hardCount so local search can never trade either of those violations
+      // for any other hard violation even when the net hardCount stays the same.
+      // Phase A' ensures grade-sync lessons start in sync; this guard keeps them there.
+      const evalCurrent = () => evaluate({
+        entries,
+        lessons,
+        restrictions,
+        config: { slotsPerDay },
+        overrides: [],
+        // Rooms are not assigned during local search (all roomId = null).
+        // Skipping room checks avoids phantom SPECIALIZED_ROOM_VIOLATED violations
+        // that would otherwise pollute the invariant count and block the invariant gate.
+        skipRoomCheck: true,
+      })
+      const countClassConflicts = (r: any): number =>
+        r.violations.filter((v: any) => v.restrictionType === 'CLASS_DOUBLE_BOOKED' && !v.isOverridden).length
+      const countGradeSyncConflicts = (r: any): number =>
+        r.violations.filter((v: any) => v.restrictionType === 'LESSON_GRADE_SYNC' && !v.isOverridden).length
+
+      // compositeHard: INVARIANT violations take absolute priority over NON_NEGOTIABLE.
+      // Multiplying invariant count by 10 000 ensures any increase in invariants
+      // always outweighs any reduction in non-negotiable violations, so local search
+      // can never trade an invariant for a non-negotiable improvement.
+      // Before the INVARIANT-tier refactor, hardCount was counts.nonNegotiable alone
+      // because hard violations used NON_NEGOTIABLE tier — that was the source of this bug.
+      const compositeHard = (r: any) => r.counts.invariant * 10_000 + r.counts.nonNegotiable
+
+      let evalResult        = evalCurrent()
+      let score             = evalResult.score
+      let hardCount         = compositeHard(evalResult)
+      let classConflicts    = countClassConflicts(evalResult)
+      let gradeSyncConflicts = countGradeSyncConflicts(evalResult)
+
+      for (let iter = 0; iter < input.nIterations; iter++) {
+        const nonSeeded = entries.filter((e: any) => !e.isSeeded)
+        if (nonSeeded.length < 2) break
+
+        let candidate: any[]
+
+        if (Math.random() < 0.7) {
+          // Swap: exchange (day, slot) of two random non-seeded entries
+          const i = Math.floor(Math.random() * nonSeeded.length)
+          let j = Math.floor(Math.random() * nonSeeded.length)
+          if (i === j) continue
+          const a = nonSeeded[i]
+          const b = nonSeeded[j]
+          candidate = entries.map((e: any) => {
+            if (e.id === a.id) return { ...e, day: b.day, slot: b.slot }
+            if (e.id === b.id) return { ...e, day: a.day, slot: a.slot }
+            return e
+          })
+        } else {
+          // Move: reassign one entry to a random (day, slot)
+          const idx = Math.floor(Math.random() * nonSeeded.length)
+          const entry = nonSeeded[idx]
+          const newDay  = days[Math.floor(Math.random() * days.length)]
+          const newSlot = Math.floor(Math.random() * slotsPerDay) + 1
+          candidate = entries.map((e: any) =>
+            e.id === entry.id ? { ...e, day: newDay, slot: newSlot } : e,
+          )
+        }
+
+        // Guard 1: same lesson must never occupy the same slot twice (DB constraint)
+        if (hasDuplicateLessonSlots(candidate)) continue
+
+        // Guard 2: no REGULAR/SHARED lesson may share a (class, day, slot) with a
+        // group lesson — absolute invariant regardless of score impact
+        if (hasRegularAtGroupSlot(candidate)) continue
+
+        const cResult              = evaluate({ entries: candidate, lessons, restrictions, config: { slotsPerDay }, overrides: [], skipRoomCheck: true })
+        const cHard                = compositeHard(cResult)
+        const cScore               = cResult.score
+        const cClassConflicts      = countClassConflicts(cResult)
+        const cGradeSyncConflicts  = countGradeSyncConflicts(cResult)
+
+        // Guard 3: class conflicts must never increase — not even if other violations improve
+        if (cClassConflicts > classConflicts) continue
+        // Guard 4: grade-sync violations must never increase — sync set up by Phase A' is preserved
+        if (cGradeSyncConflicts > gradeSyncConflicts) continue
+
+        // Three-level lexicographic acceptance
+        const fewerClass = cClassConflicts < classConflicts
+        const betterHard = cHard < hardCount
+        const sameHard   = cHard === hardCount && cScore <= score
+
+        if (fewerClass || betterHard || sameHard) {
+          entries             = candidate
+          score               = cScore
+          hardCount           = cHard
+          classConflicts      = cClassConflicts
+          gradeSyncConflicts  = cGradeSyncConflicts
+          evalResult          = cResult   // keep evalResult current so post-loop checks are accurate
+        }
+      }
+
+      // Count hard INVARIANT-tier violations in this restart's result.
+      const invariantCount = evalResult.counts.invariant
+
+      // Insert this restart's result into the top-3 list
+      insertTopCandidate({ entries, score, hardCount, classConflicts, gradeSyncConflicts, invariantCount })
+
+      // Per-restart diagnostic log
+      const b = bestStats()
+      console.log(
+        `[AutoScheduler] Restart ${String(restart + 1).padStart(2)}/${input.nRestarts}` +
+        ` | inv=${invariantCount}` +
+        ` | classConflicts=${classConflicts}` +
+        ` | gradeSync=${gradeSyncConflicts}` +
+        ` | nonNeg=${evalResult.counts.nonNegotiable}` +
+        ` | score=${score}` +
+        ` | best(inv=${b.invariantCount} cc=${b.classConflicts} gs=${b.gradeSyncConflicts} h=${b.hardCount} s=${b.score})` +
+        ` | top=${topCandidates.length}`
+      )
+
+      // Update progress, yield to event loop so the poll request can read the new state.
+      patchJob(input.jobId, { progress: Math.round(((restart + 1) / input.nRestarts) * 95) })
+      await new Promise<void>(resolve => setImmediate(resolve))
+    }
+
+    const b0 = bestStats()
+    console.log(`[AutoScheduler] ─── DONE ───────────────────────────────`)
+    console.log(`[AutoScheduler] Top candidates: ${topCandidates.length} | best inv=${b0.invariantCount} cc=${b0.classConflicts} gs=${b0.gradeSyncConflicts} h=${b0.hardCount} s=${b0.score}`)
+    console.log(`[AutoScheduler] ═══════════════════════════════════════\n`)
+
+    // ── Gate 1: all restarts were skipped — backtracking never found a valid start ──
+    if (nSkippedRestarts === input.nRestarts) {
+      const totalSlots = slotsPerDay * days.length
+      let error: string
+      if (nInfeasibleRestarts === input.nRestarts) {
+        error =
+          `The schedule is provably infeasible: the backtracking solver exhausted all ` +
+          `possibilities across all ${input.nRestarts} restarts without finding a valid ` +
+          `placement. This means it is mathematically impossible to assign all lessons ` +
+          `without hard constraint violations given the current data. ` +
+          `Check: (1) no class exceeds ${totalSlots} hours/week ` +
+          `(${slotsPerDay} slots/day × ${days.length} days), ` +
+          `(2) no teacher is over-allocated, (3) group-lesson slots don't block too many regular lessons.`
+      } else {
+        error =
+          `The auto-scheduler could not find a valid placement in ${input.nRestarts} restarts ` +
+          `(${nInfeasibleRestarts} proved infeasible, ${nSkippedRestarts - nInfeasibleRestarts} timed out after ${BACKTRACK_TIMEOUT_MS / 1000}s). ` +
+          `The schedule may be infeasible or extremely tightly constrained. ` +
+          `Try: reducing total lesson hours, increasing slots/day in School Config, ` +
+          `or running more restarts.`
+      }
+      jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100, error })
+      return
+    }
+
+    // ── Phase 1: dedup → assign rooms → Gate 2 → full eval for each candidate ──
+    // We evaluate ALL candidates before persisting any so we can rank them by
+    // their ACTUAL quality (full post-room evaluation) rather than the local-search
+    // score (which skips room checks).  Only after sorting do we persist in order
+    // so the schedule names ("Option 1 — Best", "Option 2", …) are accurate.
+
+    const lessonMap = new Map(lessons.map((l: any) => [l.id, l]))
+
+    interface PreSaved {
+      withRooms: any[]
+      fullEval:  ReturnType<typeof evaluate>
+    }
+    const preSaved: PreSaved[] = []
+
+    for (let i = 0; i < topCandidates.length; i++) {
+      const candidate = topCandidates[i]
+      patchJob(input.jobId, { statusMessage: `Evaluating candidate ${i + 1}…`, progress: 97 })
+
+      const deduped  = deduplicateLessonSlots(candidate.entries, days, slotsPerDay)
+      const withRooms = assignRooms(deduped, lessons, rooms)
+
+      const enriched = withRooms.map((e: any) => ({
+        ...e,
+        lesson:    e.lesson ?? lessonMap.get(e.lessonId),
+        overrides: e.overrides ?? [],
+      })).filter((e: any) => e.lesson)
+
+      // Gate 2: only true invariants (teacher/class double-booking etc.) block here
+      const gateEval = evaluate({
+        entries: enriched as any, lessons: lessons as any,
+        restrictions: [], config: { slotsPerDay }, overrides: [],
+      })
+      if (gateEval.counts.invariant > 0) {
+        const breakdown = gateEval.violations
+          .filter((v: any) => v.tier === 'INVARIANT')
+          .reduce((m: Map<string,number>, v: any) => {
+            const t = String(v.restrictionType)
+            m.set(t, (m.get(t) ?? 0) + 1)
+            return m
+          }, new Map<string,number>())
+        console.warn(`[AutoScheduler] Candidate ${i + 1} failed Gate 2 (${[...breakdown.entries()].map(([t,n]) => `${t}×${n}`).join(', ')}) — skipping`)
+        continue
+      }
+
+      const fullEval = evaluate({
+        entries: enriched as any, lessons: lessons as any,
+        restrictions: restrictions as any, config: { slotsPerDay }, overrides: [],
+      })
+      preSaved.push({ withRooms, fullEval })
+    }
+
+    // ── Phase 2: sort by actual quality, then persist in ranked order ──
+    // Priority: fewest NON_NEGOTIABLE → fewest IMPORTANT → lowest total score.
+    // This ensures the "Best" label reflects post-room reality, not local-search score.
+    preSaved.sort((a, b) => {
+      const ac = a.fullEval.counts, bc = b.fullEval.counts
+      if (ac.nonNegotiable !== bc.nonNegotiable) return ac.nonNegotiable - bc.nonNegotiable
+      if (ac.important     !== bc.important)     return ac.important     - bc.important
+      return a.fullEval.score - b.fullEval.score
+    })
+
+    const optionLabels    = ['Option 1 — Best', 'Option 2', 'Option 3']
+    const savedCandidates: CandidateResult[] = []
+
+    for (let i = 0; i < preSaved.length; i++) {
+      const { withRooms, fullEval } = preSaved[i]
+      patchJob(input.jobId, { statusMessage: `Saving ${optionLabels[i]}…`, progress: 98 + i })
+
+      const scheduleName = `${input.name} — ${optionLabels[i]}`
+      const schedule = await prisma.schedule.create({
+        data: {
+          name:  scheduleName,
+          state: 'DRAFT',
+          entries: {
+            create: withRooms.map((e: any) => ({
+              lessonId: e.lessonId,
+              day:      e.day,
+              slot:     e.slot,
+              roomId:   e.roomId  ?? null,
+              roomId2:  e.roomId2 ?? null,
+              isSeeded: e.isSeeded ?? false,
+            })),
+          },
+        },
+      })
+
+      savedCandidates.push({
+        scheduleId: schedule.id,
+        name:       scheduleName,
+        score:      fullEval.score,
+        violations: {
+          total:         fullEval.counts.total,
+          nonNegotiable: fullEval.counts.nonNegotiable,
+          important:     fullEval.counts.important,
+          preferred:     fullEval.counts.preferred,
+          flexible:      fullEval.counts.flexible,
+        },
+      })
+      console.log(`[AutoScheduler] Saved ${scheduleName}: nonNeg=${fullEval.counts.nonNegotiable} imp=${fullEval.counts.important} score=${fullEval.score}`)
+    }
+
+    if (savedCandidates.length === 0) {
+      jobs.set(input.jobId, {
+        jobId: input.jobId, status: 'ERROR', progress: 100,
+        error: 'All candidate schedules failed the post-room-assignment invariant check. This is an algorithmic bug — please report it.',
+      })
+      return
+    }
+
+    jobs.set(input.jobId, {
+      jobId:      input.jobId,
+      status:     'DONE',
+      progress:   100,
+      candidates: savedCandidates,
+      scheduleId: savedCandidates[0].scheduleId,  // convenience for any legacy callers
+    })
+  } catch (err: any) {
+    console.error('[AutoScheduler] Job failed:', err)
     jobs.set(input.jobId, {
       jobId: input.jobId,
       status: 'ERROR',
       progress: 0,
-      error: err.message,
+      error: err?.message ?? 'Unknown error',
     })
-  })
-}
-
-// ─── Worker thread ─────────────────────────────────────────────
-
-if (!isMainThread) {
-  runWorker(workerData)
-}
-
-async function runWorker(data: any) {
-  const { lessons, restrictions, slotsPerDay, seedEntries, nRestarts, nIterations } = data
-  const days = DAY_ORDER
-
-  // Expand lessons into placement instances
-  // Each lesson needs hoursPerWeek entries in the final schedule
-  const instances = expandLessons(lessons)
-  const seededLessonKeys = new Set(seedEntries.map((e: any) => `${e.lessonId}:${e.day}:${e.slot}`))
-
-  // Filter out instances already covered by seed
-  const toPlace = instances.filter((inst: any) =>
-    !seedEntries.some((se: any) => se.lessonId === inst.lessonId)
-  )
-
-  let bestEntries: any[] = []
-  let bestScore = Infinity
-
-  for (let restart = 0; restart < nRestarts; restart++) {
-    // Step 1: Start with seed entries
-    let entries: any[] = seedEntries.map((se: any) => ({
-      id: `seed-${se.id}`,
-      lessonId: se.lessonId,
-      day: se.day,
-      slot: se.slot,
-      roomId: se.roomId,
-      isSeeded: true,
-      overrides: se.overrides ?? [],
-      lesson: lessons.find((l: any) => l.id === se.lessonId),
-    })).filter((e: any) => e.lesson)
-
-    // Step 2: Random initial placement for non-seeded instances
-    const shuffled = [...toPlace].sort(() => Math.random() - 0.5)
-    for (const inst of shuffled) {
-      const day = days[Math.floor(Math.random() * days.length)]
-      const slot = Math.floor(Math.random() * slotsPerDay) + 1
-      entries.push({
-        id: `gen-${inst.lessonId}-${Math.random()}`,
-        lessonId: inst.lessonId,
-        day,
-        slot,
-        roomId: null,
-        isSeeded: false,
-        overrides: [],
-        lesson: inst.lesson,
-      })
-    }
-
-    // Step 3: Local search (hill climbing)
-    let score = evaluate({ entries, lessons, restrictions, config: { slotsPerDay }, overrides: [] }).score
-
-    for (let iter = 0; iter < nIterations; iter++) {
-      const nonSeeded = entries.filter(e => !e.isSeeded)
-      if (nonSeeded.length < 2) break
-
-      if (Math.random() < 0.7) {
-        // Swap two random entries' (day, slot)
-        const i = Math.floor(Math.random() * nonSeeded.length)
-        const j = Math.floor(Math.random() * nonSeeded.length)
-        if (i === j) continue
-
-        const a = nonSeeded[i]
-        const b = nonSeeded[j]
-        const candidate = entries.map(e => {
-          if (e.id === a.id) return { ...e, day: b.day, slot: b.slot }
-          if (e.id === b.id) return { ...e, day: a.day, slot: a.slot }
-          return e
-        })
-        const candidateScore = evaluate({ entries: candidate, lessons, restrictions, config: { slotsPerDay }, overrides: [] }).score
-        if (candidateScore < score) {
-          entries = candidate
-          score = candidateScore
-        }
-      } else {
-        // Random move: pick one entry and assign a new (day, slot)
-        const idx = Math.floor(Math.random() * nonSeeded.length)
-        const entry = nonSeeded[idx]
-        const newDay = days[Math.floor(Math.random() * days.length)]
-        const newSlot = Math.floor(Math.random() * slotsPerDay) + 1
-        const candidate = entries.map(e =>
-          e.id === entry.id ? { ...e, day: newDay, slot: newSlot } : e
-        )
-        const candidateScore = evaluate({ entries: candidate, lessons, restrictions, config: { slotsPerDay }, overrides: [] }).score
-        if (candidateScore < score) {
-          entries = candidate
-          score = candidateScore
-        }
-      }
-    }
-
-    if (score < bestScore) {
-      bestScore = score
-      bestEntries = entries
-    }
-
-    parentPort?.postMessage({ type: 'progress', progress: Math.round(((restart + 1) / nRestarts) * 100) })
   }
-
-  parentPort?.postMessage({ type: 'result', entries: bestEntries })
 }
 
-/** Expand lessons into individual placement instances */
+// ─── Helpers ───────────────────────────────────────────────────
+
+/**
+ * Returns all teacher IDs associated with a lesson.
+ * For REGULAR/SHARED/MATH_GROUP/ENGLISH_GROUP: just lesson.teacherId.
+ * For PARALLEL/MULTI_TEACHER: the lessonTeachers array (teacherId is null).
+ */
+function lessonTeacherIds(lesson: any): string[] {
+  const ids: string[] = []
+  if (lesson.teacherId) ids.push(lesson.teacherId)
+  for (const lt of lesson.lessonTeachers ?? []) {
+    if (lt.teacherId && !ids.includes(lt.teacherId)) ids.push(lt.teacherId)
+  }
+  return ids
+}
+
 function expandLessons(lessons: any[]): Array<{ lessonId: string; lesson: any }> {
   const instances: Array<{ lessonId: string; lesson: any }> = []
   for (const lesson of lessons) {
@@ -243,4 +924,331 @@ function expandLessons(lessons: any[]): Array<{ lessonId: string; lesson: any }>
     }
   }
   return instances
+}
+
+/**
+ * Returns true if any REGULAR or SHARED lesson shares a (classId, day, slot) with a
+ * MATH_GROUP or ENGLISH_GROUP lesson.  This is an absolute invariant: during a group
+ * period ALL students in the grade are distributed across level groups — no student
+ * can simultaneously be in a regular class.  We enforce this in candidate generation
+ * (not just via the evaluator) so the local search can never drift into or maintain
+ * such states even when doing so would numerically reduce the violation count.
+ */
+function hasRegularAtGroupSlot(entries: any[]): boolean {
+  // Collect group-occupied (classId:day:slot) keys
+  const groupKeys = new Set<string>()
+  for (const e of entries) {
+    if (e.lesson.type === 'MATH_GROUP' || e.lesson.type === 'ENGLISH_GROUP') {
+      for (const cls of e.lesson.classes) {
+        groupKeys.add(`${cls.id}:${e.day}:${e.slot}`)
+      }
+    }
+  }
+  if (groupKeys.size === 0) return false
+
+  // Check whether any regular/shared/parallel/multi-teacher entry lands on a group slot for the same class
+  for (const e of entries) {
+    if (!['REGULAR', 'SHARED', 'PARALLEL', 'MULTI_TEACHER'].includes(e.lesson.type)) continue
+    for (const cls of e.lesson.classes) {
+      if (groupKeys.has(`${cls.id}:${e.day}:${e.slot}`)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Returns true if any two entries share the same (lessonId, day, slot) —
+ * which would violate the DB unique constraint and produce a bad schedule.
+ */
+function hasDuplicateLessonSlots(entries: any[]): boolean {
+  const seen = new Set<string>()
+  for (const e of entries) {
+    const key = `${e.lessonId}:${e.day}:${e.slot}`
+    if (seen.has(key)) return true
+    seen.add(key)
+  }
+  return false
+}
+
+/**
+ * Remove (lessonId, day, slot) duplicates by moving conflicting entries to
+ * the first free slot available for that lesson.  Called as a safety net
+ * before persisting so we never hit the DB unique constraint.
+ */
+function deduplicateLessonSlots(entries: any[], days: string[], slotsPerDay: number): any[] {
+  const seen = new Set<string>()
+  const result: any[] = []
+
+  for (const e of entries) {
+    const key = `${e.lessonId}:${e.day}:${e.slot}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push(e)
+    } else {
+      // Find the first free slot for this lesson
+      let placed = false
+      outer: for (const day of days) {
+        for (let slot = 1; slot <= slotsPerDay; slot++) {
+          const newKey = `${e.lessonId}:${day}:${slot}`
+          if (!seen.has(newKey)) {
+            seen.add(newKey)
+            result.push({ ...e, day, slot })
+            placed = true
+            break outer
+          }
+        }
+      }
+      if (!placed) {
+        // hoursPerWeek exceeds available slots — keep entry as-is (admin must resolve)
+        result.push(e)
+      }
+    }
+  }
+
+  return result
+}
+
+/**
+ * Assign rooms to entries greedily, per (day, slot) group.
+ *
+ * Priority order within each slot:
+ *   1. Seeded entries already have roomIds — keep them, mark their room used.
+ *   2. Entries whose subject has a specializedRoomId get that room (if free).
+ *   3. All remaining entries get the first unused general room.
+ *
+ * If there are more entries than rooms in a slot some entries stay roomless —
+ * the admin can assign them manually via the LessonCard room badge.
+ */
+function assignRooms(entries: any[], lessons: any[], rooms: any[]): any[] {
+  // Build a map from lessonId to its subject for quick lookup
+  const lessonMap = new Map<string, any>()
+  for (const l of lessons) lessonMap.set(l.id, l)
+
+  // Group entry indices by (day, slot)
+  const slotGroups = new Map<string, number[]>()
+  entries.forEach((e, idx) => {
+    const key = `${e.day}:${e.slot}`
+    if (!slotGroups.has(key)) slotGroups.set(key, [])
+    slotGroups.get(key)!.push(idx)
+  })
+
+  const result = entries.map(e => ({ ...e }))
+
+  for (const indices of slotGroups.values()) {
+    const usedRoomIds = new Set<string>()
+
+    // Pass 1: record rooms already assigned (primary and secondary) so we don't double-assign
+    for (const idx of indices) {
+      const e = result[idx]
+      if (e.roomId)  usedRoomIds.add(e.roomId)
+      if (e.roomId2) usedRoomIds.add(e.roomId2)
+    }
+
+    // Pass 2: give specialized rooms to entries that need them
+    for (const idx of indices) {
+      const e = result[idx]
+      if (e.roomId) continue  // already set (seeded)
+      const lesson = lessonMap.get(e.lessonId)
+      const specialId = lesson?.subject?.specializedRoomId
+      if (specialId && !usedRoomIds.has(specialId)) {
+        result[idx].roomId = specialId
+        usedRoomIds.add(specialId)
+      }
+    }
+
+    // Pass 3: assign any remaining free room to entries still without one
+    for (const idx of indices) {
+      const e = result[idx]
+      if (e.roomId) continue
+      const freeRoom = rooms.find((r: any) => !usedRoomIds.has(r.id))
+      if (freeRoom) {
+        result[idx].roomId = freeRoom.id
+        usedRoomIds.add(freeRoom.id)
+      }
+    }
+  }
+
+  return result
+}
+
+// ─── Backtracking CSP solver (Phase B replacement) ────────────
+//
+// Guarantees the initial placement has zero hard-invariant violations.
+// Uses:
+//   - MRV ordering (most-constrained lesson first)
+//   - Forward checking (prune when any remaining lesson has 0 valid slots)
+//   - Per-restart slot-order shuffle (exploration variety)
+//   - Per-restart deadline (skips timed-out restarts instead of hanging)
+//
+// Solvable school instances typically complete in < 1 s.
+// Provably infeasible instances fail almost instantly via forward checking.
+
+const BACKTRACK_TIMEOUT_MS = 3_000  // 3 s per restart — keeps the event loop free for poll requests
+
+/** Count-map occupancy for exact undo during backtracking. */
+interface BacktrackOcc {
+  teacherSlot:       Map<string, number>  // "tid:day:slot"    → refcount
+  classSlot:         Map<string, number>  // "cid:day:slot"    → refcount
+  lessonAtSlot:      Map<string, number>  // "lid:day:slot"    → refcount (no same-lesson dupe)
+  subjectClassDay:   Map<string, number>  // "sid:cid:day"     → refcount (D7)
+  specializedRoomSlot: Map<string, number> // "roomId:day:slot" → refcount (specialized room saturation)
+  groupClassSlot:    Set<string>          // Phase-A slots — immutable during backtrack
+}
+
+function occIncr(m: Map<string, number>, k: string): void {
+  m.set(k, (m.get(k) ?? 0) + 1)
+}
+function occDecr(m: Map<string, number>, k: string): void {
+  const v = m.get(k); if (!v) return
+  if (v === 1) m.delete(k); else m.set(k, v - 1)
+}
+function occHas(m: Map<string, number>, k: string): boolean {
+  return (m.get(k) ?? 0) > 0
+}
+
+function btValid(
+  inst: any, day: string, slot: number,
+  occ: BacktrackOcc, tids: string[],
+): boolean {
+  if (occHas(occ.lessonAtSlot, `${inst.lessonId}:${day}:${slot}`)) return false
+  for (const tid of tids)
+    if (occHas(occ.teacherSlot, `${tid}:${day}:${slot}`)) return false
+  for (const cls of inst.lesson.classes) {
+    if (occHas(occ.classSlot,   `${cls.id}:${day}:${slot}`)) return false
+    if (occ.groupClassSlot.has( `${cls.id}:${day}:${slot}`)) return false
+    if (occHas(occ.subjectClassDay, `${inst.lesson.subjectId}:${cls.id}:${day}`)) return false  // D7
+  }
+  // Specialized room: only one lesson may claim the room at this slot.
+  const specialRoomId = inst.lesson.subject?.specializedRoomId
+  if (specialRoomId && occHas(occ.specializedRoomSlot, `${specialRoomId}:${day}:${slot}`)) return false
+  return true
+}
+
+function btApply(inst: any, day: string, slot: number, occ: BacktrackOcc, tids: string[]): void {
+  occIncr(occ.lessonAtSlot, `${inst.lessonId}:${day}:${slot}`)
+  for (const tid of tids) occIncr(occ.teacherSlot, `${tid}:${day}:${slot}`)
+  for (const cls of inst.lesson.classes) {
+    occIncr(occ.classSlot,      `${cls.id}:${day}:${slot}`)
+    occIncr(occ.subjectClassDay, `${inst.lesson.subjectId}:${cls.id}:${day}`)
+  }
+  const specialRoomId = inst.lesson.subject?.specializedRoomId
+  if (specialRoomId) occIncr(occ.specializedRoomSlot, `${specialRoomId}:${day}:${slot}`)
+}
+
+function btUndo(inst: any, day: string, slot: number, occ: BacktrackOcc, tids: string[]): void {
+  occDecr(occ.lessonAtSlot, `${inst.lessonId}:${day}:${slot}`)
+  for (const tid of tids) occDecr(occ.teacherSlot, `${tid}:${day}:${slot}`)
+  for (const cls of inst.lesson.classes) {
+    occDecr(occ.classSlot,      `${cls.id}:${day}:${slot}`)
+    occDecr(occ.subjectClassDay, `${inst.lesson.subjectId}:${cls.id}:${day}`)
+  }
+  const specialRoomId = inst.lesson.subject?.specializedRoomId
+  if (specialRoomId) occDecr(occ.specializedRoomSlot, `${specialRoomId}:${day}:${slot}`)
+}
+
+function btCountValid(
+  inst: any, occ: BacktrackOcc,
+  slots: Array<{ day: string; slot: number }>, tids: string[],
+): number {
+  let n = 0
+  for (const { day, slot } of slots) if (btValid(inst, day, slot, occ, tids)) n++
+  return n
+}
+
+function fisherYates<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+type BtResult =
+  | { ok: true;  entries: any[] }
+  | { ok: false; timedOut: boolean }
+
+/**
+ * Backtracking CSP solver for Phase B (all non-group, non-sync lessons).
+ *
+ * @param instances  Lesson instances — pre-shuffled for variety across restarts.
+ * @param initOcc    Occupancy snapshot after Phase A/A' (never mutated).
+ * @param allSlots   Every (day, slot) pair in the school config.
+ * @param deadline   Epoch ms; solver returns timedOut when exceeded.
+ * @param restart    Restart index — used only for deterministic entry IDs.
+ */
+function backtrackPhaseB(
+  instances: any[],
+  initOcc: BacktrackOcc,
+  allSlots: Array<{ day: string; slot: number }>,
+  deadline: number,
+  restart: number,
+): BtResult {
+  // Pre-compute teacher IDs once per instance.
+  const order = instances.map(inst => ({
+    inst,
+    tids: lessonTeacherIds(inst.lesson),
+    validCount: 0,
+  }))
+  // Compute valid-slot counts against initOcc for MRV ordering.
+  for (const item of order) {
+    item.validCount = btCountValid(item.inst, initOcc, allSlots, item.tids)
+  }
+  // MRV: fewest valid slots first.  Equal-count ties preserve the caller's
+  // shuffle order, giving different exploration paths across restarts.
+  order.sort((a, b) => a.validCount - b.validCount)
+
+  // Clone occupancy so Phase A/A' state is never mutated.
+  const occ: BacktrackOcc = {
+    teacherSlot:         new Map(initOcc.teacherSlot),
+    classSlot:           new Map(initOcc.classSlot),
+    lessonAtSlot:        new Map(initOcc.lessonAtSlot),
+    subjectClassDay:     new Map(initOcc.subjectClassDay),
+    specializedRoomSlot: new Map(initOcc.specializedRoomSlot),
+    groupClassSlot:      initOcc.groupClassSlot,
+  }
+
+  const placed: any[] = []
+  let timedOut = false
+
+  // Per-restart slot order shuffle — explores different paths across restarts.
+  const slotOrder = fisherYates([...allSlots])
+
+  function place(idx: number): boolean {
+    if (Date.now() > deadline) { timedOut = true; return false }
+    if (idx === order.length)  return true   // all instances placed ✓
+
+    const { inst, tids } = order[idx]
+
+    for (const { day, slot } of slotOrder) {
+      if (!btValid(inst, day, slot, occ, tids)) continue
+
+      btApply(inst, day, slot, occ, tids)
+      placed.push({
+        id: `gen-${inst.lessonId}-${restart}-${placed.length}`,
+        lessonId: inst.lessonId,
+        day, slot,
+        roomId: null, isSeeded: false, overrides: [],
+        lesson: inst.lesson,
+      })
+
+      // Forward check: every remaining instance must still have ≥ 1 valid slot.
+      let feasible = true
+      for (let i = idx + 1; i < order.length; i++) {
+        if (btCountValid(order[i].inst, occ, allSlots, order[i].tids) === 0) {
+          feasible = false; break
+        }
+      }
+
+      if (feasible && place(idx + 1)) return true
+
+      placed.pop()
+      btUndo(inst, day, slot, occ, tids)
+      if (timedOut) return false
+    }
+
+    return false  // no valid slot found → backtrack
+  }
+
+  if (place(0)) return { ok: true, entries: placed }
+  return { ok: false, timedOut }
 }

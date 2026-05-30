@@ -28,16 +28,21 @@ interface EvalEntry {
   day: string
   slot: number
   roomId: string | null
+  roomId2: string | null
   overrides: Array<{ restrictionType: string; restrictionId: string | null }>
   lesson: {
     id: string
     type: string
     subjectId: string
-    teacherId: string
+    /** null for PARALLEL and MULTI_TEACHER — use lessonTeachers instead */
+    teacherId: string | null
     gradeId: string | null
     mathLevel: string | null
+    englishLevel: string | null
     classes: Array<{ id: string; gradeId: string }>
     subject: { isArts: boolean; specializedRoomId: string | null }
+    /** Populated for PARALLEL and MULTI_TEACHER */
+    lessonTeachers?: Array<{ teacherId: string; classId: string | null }>
   }
 }
 
@@ -64,6 +69,13 @@ interface EvalInput {
   restrictions: EvalRestriction[]
   config: EvalConfig | null
   overrides: any[]
+  /**
+   * When true, skip D5 (ROOM_CONFLICT) and D6 (SPECIALIZED_ROOM_VIOLATED).
+   * Use this inside the auto-scheduler during local search, where rooms have
+   * not yet been assigned (all roomId values are null). Room checks are only
+   * meaningful after assignRooms() runs.
+   */
+  skipRoomCheck?: boolean
 }
 
 // ─── Main evaluate function ────────────────────────────────────
@@ -77,8 +89,12 @@ export function evaluate(input: EvalInput): EvaluationResult {
   violations.push(...checkTeacherDoubleBooked(entries))
   violations.push(...checkClassDoubleBooked(entries))
   violations.push(...checkMathGroupsSimultaneous(entries))
-  violations.push(...checkRoomConflict(entries))
-  violations.push(...checkSpecializedRoom(entries))
+  violations.push(...checkEnglishGroupsSimultaneous(entries))
+  if (!input.skipRoomCheck) {
+    violations.push(...checkRoomConflict(entries))
+    violations.push(...checkSpecializedRoom(entries))
+  }
+  violations.push(...checkNoSubjectTwicePerDay(entries))
 
   // ── User-configured restrictions ─────────────────────────────
   for (const r of restrictions) {
@@ -92,11 +108,14 @@ export function evaluate(input: EvalInput): EvaluationResult {
   }
 
   // ── Score ─────────────────────────────────────────────────────
+  // INVARIANT violations carry TIER_PENALTY[INVARIANT] = 1 billion each,
+  // dwarfing any realistic sum of soft-constraint penalties.
   const score = violations
     .filter(v => !v.isOverridden)
     .reduce((sum, v) => sum + TIER_PENALTY[v.tier], 0)
 
   const byTier = {
+    INVARIANT: violations.filter(v => v.tier === RestrictionTier.INVARIANT),
     NON_NEGOTIABLE: violations.filter(v => v.tier === RestrictionTier.NON_NEGOTIABLE),
     IMPORTANT: violations.filter(v => v.tier === RestrictionTier.IMPORTANT),
     PREFERRED: violations.filter(v => v.tier === RestrictionTier.PREFERRED),
@@ -109,6 +128,7 @@ export function evaluate(input: EvalInput): EvaluationResult {
     byTier,
     counts: {
       total: violations.filter(v => !v.isOverridden).length,
+      invariant: byTier.INVARIANT.filter(v => !v.isOverridden).length,
       nonNegotiable: byTier.NON_NEGOTIABLE.filter(v => !v.isOverridden).length,
       important: byTier.IMPORTANT.filter(v => !v.isOverridden).length,
       preferred: byTier.PREFERRED.filter(v => !v.isOverridden).length,
@@ -128,7 +148,7 @@ function hardViolation(
   return {
     restrictionId: null,
     restrictionType: type,
-    tier: RestrictionTier.NON_NEGOTIABLE,
+    tier: RestrictionTier.INVARIANT,
     message,
     affectedEntryIds: entryIds,
     isOverridden: false,
@@ -140,9 +160,17 @@ function checkTeacherDoubleBooked(entries: EvalEntry[]): Violation[] {
   const violations: Violation[] = []
   const byTeacherDaySlot = new Map<string, EvalEntry[]>()
   for (const e of entries) {
-    const key = `${e.lesson.teacherId}:${e.day}:${e.slot}`
-    if (!byTeacherDaySlot.has(key)) byTeacherDaySlot.set(key, [])
-    byTeacherDaySlot.get(key)!.push(e)
+    // Collect all teacher IDs for this entry (primary + lessonTeachers)
+    const teacherIds = new Set<string>()
+    if (e.lesson.teacherId) teacherIds.add(e.lesson.teacherId)
+    for (const lt of e.lesson.lessonTeachers ?? []) {
+      if (lt.teacherId) teacherIds.add(lt.teacherId)
+    }
+    for (const tid of teacherIds) {
+      const key = `${tid}:${e.day}:${e.slot}`
+      if (!byTeacherDaySlot.has(key)) byTeacherDaySlot.set(key, [])
+      byTeacherDaySlot.get(key)!.push(e)
+    }
   }
   for (const [, group] of byTeacherDaySlot) {
     if (group.length > 1) {
@@ -169,6 +197,20 @@ function checkClassDoubleBooked(entries: EvalEntry[]): Violation[] {
   }
   for (const [, group] of byClassDaySlot) {
     if (group.length > 1) {
+      // Math/English level groups (same type, same grade) are DESIGNED to be simultaneous:
+      // students are re-distributed into level groups at the same period, not double-booked.
+      // All entries in the cell-group must be the same lesson type and same grade for the
+      // exemption to apply; any mix with regular/shared lessons is still a violation.
+      const allSiblingGroups =
+        group.every(e =>
+          (e.lesson.type === 'MATH_GROUP' || e.lesson.type === 'ENGLISH_GROUP') &&
+          e.lesson.gradeId != null,
+        ) &&
+        new Set(group.map(e => e.lesson.type)).size === 1 &&    // all same type (MATH or ENGLISH)
+        new Set(group.map(e => e.lesson.gradeId)).size === 1    // all same grade
+
+      if (allSiblingGroups) continue
+
       violations.push(hardViolation(
         'CLASS_DOUBLE_BOOKED',
         `A class has two lessons at the same time (${group[0].day}, slot ${group[0].slot})`,
@@ -179,26 +221,77 @@ function checkClassDoubleBooked(entries: EvalEntry[]): Violation[] {
   return violations
 }
 
-/** D3: All math level groups for the same grade must be at the same time slot */
+/**
+ * D3: All math level groups for the same grade must be placed simultaneously —
+ * every (day, slot) that contains ANY math group entry for a grade must contain
+ * entries from ALL distinct math group lessons for that grade.
+ *
+ * "All at the same slot" does NOT mean "every entry has the same slot".
+ * A lesson with hoursPerWeek=2 legitimately has entries at two different
+ * (day, slot) pairs.  What we enforce is: for each (day, slot) where at least
+ * one math group lesson appears, EVERY other math group lesson for the grade
+ * must also appear there.  Two entries of the SAME lesson at different slots
+ * do not trigger a violation.
+ */
 function checkMathGroupsSimultaneous(entries: EvalEntry[]): Violation[] {
+  return checkGroupSimultaneous(entries, 'MATH_GROUP', 'MATH_GROUPS_NOT_SIMULTANEOUS', 'Math')
+}
+
+/** D4: Same constraint for English level groups */
+function checkEnglishGroupsSimultaneous(entries: EvalEntry[]): Violation[] {
+  return checkGroupSimultaneous(entries, 'ENGLISH_GROUP', 'ENGLISH_GROUPS_NOT_SIMULTANEOUS', 'English')
+}
+
+function checkGroupSimultaneous(
+  entries: EvalEntry[],
+  groupType: string,
+  violationType: HardInvariantType,
+  label: string,
+): Violation[] {
   const violations: Violation[] = []
-  const mathByGrade = new Map<string, EvalEntry[]>()
+
+  // Collect all distinct lessonIds per grade for this group type
+  const distinctLessonsByGrade = new Map<string, Set<string>>()
   for (const e of entries) {
-    if (e.lesson.type === 'MATH_GROUP' && e.lesson.gradeId) {
-      if (!mathByGrade.has(e.lesson.gradeId)) mathByGrade.set(e.lesson.gradeId, [])
-      mathByGrade.get(e.lesson.gradeId)!.push(e)
+    if (e.lesson.type === groupType && e.lesson.gradeId) {
+      if (!distinctLessonsByGrade.has(e.lesson.gradeId)) {
+        distinctLessonsByGrade.set(e.lesson.gradeId, new Set())
+      }
+      distinctLessonsByGrade.get(e.lesson.gradeId)!.add(e.lessonId)
     }
   }
-  for (const [gradeId, gradeEntries] of mathByGrade) {
-    const slots = new Set(gradeEntries.map(e => `${e.day}:${e.slot}`))
-    if (slots.size > 1) {
-      violations.push(hardViolation(
-        'MATH_GROUPS_NOT_SIMULTANEOUS',
-        `Math level groups for grade ${gradeId} are not all at the same time slot`,
-        gradeEntries.map(e => e.id),
-      ))
+
+  for (const [gradeId, distinctLessonIds] of distinctLessonsByGrade) {
+    // Only a single lesson exists for this grade — nothing to be simultaneous with
+    if (distinctLessonIds.size <= 1) continue
+
+    // For each (day, slot) that has at least one group entry, track which lessonIds are present
+    const slotLessonIds = new Map<string, Set<string>>()
+    const slotEntryIds = new Map<string, string[]>()
+
+    for (const e of entries) {
+      if (e.lesson.type !== groupType || e.lesson.gradeId !== gradeId) continue
+      const key = `${e.day}:${e.slot}`
+      if (!slotLessonIds.has(key)) {
+        slotLessonIds.set(key, new Set())
+        slotEntryIds.set(key, [])
+      }
+      slotLessonIds.get(key)!.add(e.lessonId)
+      slotEntryIds.get(key)!.push(e.id)
+    }
+
+    // Any slot that does not have the full set of lessons is a violation
+    for (const [key, presentIds] of slotLessonIds) {
+      if (presentIds.size < distinctLessonIds.size) {
+        violations.push(hardViolation(
+          violationType,
+          `${label} level groups for grade ${gradeId} are not all at the same time slot (${key})`,
+          slotEntryIds.get(key)!,
+        ))
+      }
     }
   }
+
   return violations
 }
 
@@ -206,11 +299,16 @@ function checkMathGroupsSimultaneous(entries: EvalEntry[]): Violation[] {
 function checkRoomConflict(entries: EvalEntry[]): Violation[] {
   const violations: Violation[] = []
   const byRoomDaySlot = new Map<string, EvalEntry[]>()
+
+  // Index all room assignments (primary and secondary) into the same map
+  // so conflicts between any combination of roomId / roomId2 are detected.
   for (const e of entries) {
-    if (!e.roomId) continue
-    const key = `${e.roomId}:${e.day}:${e.slot}`
-    if (!byRoomDaySlot.has(key)) byRoomDaySlot.set(key, [])
-    byRoomDaySlot.get(key)!.push(e)
+    for (const rid of [e.roomId, e.roomId2]) {
+      if (!rid) continue
+      const key = `${rid}:${e.day}:${e.slot}`
+      if (!byRoomDaySlot.has(key)) byRoomDaySlot.set(key, [])
+      byRoomDaySlot.get(key)!.push(e)
+    }
   }
   for (const [, group] of byRoomDaySlot) {
     if (group.length > 1) {
@@ -224,20 +322,84 @@ function checkRoomConflict(entries: EvalEntry[]): Violation[] {
   return violations
 }
 
-/** D6: A subject with a specialized room must always use that room */
+/**
+ * D6: A subject with a specialized room should use that room.
+ *
+ * Tier: NON_NEGOTIABLE (not INVARIANT) — per product spec §6:
+ * "Placement is never blocked by room unavailability — it's flagged as a warning."
+ * A wrong-room assignment is a scheduling quality issue the admin can fix manually
+ * by reassigning the room badge on the lesson card. It is NOT a physical impossibility
+ * the way a teacher or class double-booking is. Using INVARIANT here would cause the
+ * auto-scheduler to refuse to surface schedules whenever room slots are tight.
+ */
 function checkSpecializedRoom(entries: EvalEntry[]): Violation[] {
   const violations: Violation[] = []
   for (const e of entries) {
     const specializedRoomId = e.lesson.subject?.specializedRoomId
     if (!specializedRoomId) continue
-    if (e.roomId !== specializedRoomId) {
-      violations.push(hardViolation(
-        'SPECIALIZED_ROOM_VIOLATED',
-        `This subject must be taught in its designated room`,
-        [e.id],
-      ))
+    // Accept if roomId OR roomId2 matches — PARALLEL lessons use two rooms
+    if (e.roomId !== specializedRoomId && e.roomId2 !== specializedRoomId) {
+      violations.push({
+        restrictionId: null,
+        restrictionType: 'SPECIALIZED_ROOM_VIOLATED' as any,
+        tier: RestrictionTier.NON_NEGOTIABLE,
+        message: 'This subject must be taught in its designated room — please reassign the room badge',
+        affectedEntryIds: [e.id],
+        isOverridden: false,
+      })
     }
   }
+  return violations
+}
+
+/**
+ * D7: A class must not have the same subject at more than one time slot on the same day.
+ *
+ * Exception built-in: Math/English group entries that share the SAME (day, slot) are
+ * simultaneous — students are re-distributed into exactly one group, so they count
+ * as a single occurrence.  Because we group by (day:slot), multiple group entries at
+ * the same slot all land in the same bucket → size 1 → no violation.
+ * If group entries are spread over two different slots (D3/D4 violation), this check
+ * correctly fires as well.
+ */
+function checkNoSubjectTwicePerDay(entries: EvalEntry[]): Violation[] {
+  const violations: Violation[] = []
+
+  // index: classId → day → subjectId → slotKey → EvalEntry[]
+  const index = new Map<string, Map<string, Map<string, Map<string, EvalEntry[]>>>>()
+
+  for (const e of entries) {
+    for (const cls of e.lesson.classes) {
+      let byDay = index.get(cls.id)
+      if (!byDay) { byDay = new Map(); index.set(cls.id, byDay) }
+
+      let bySubject = byDay.get(e.day)
+      if (!bySubject) { bySubject = new Map(); byDay.set(e.day, bySubject) }
+
+      let bySlot = bySubject.get(e.lesson.subjectId)
+      if (!bySlot) { bySlot = new Map(); bySubject.set(e.lesson.subjectId, bySlot) }
+
+      const key = `${e.day}:${e.slot}`
+      if (!bySlot.has(key)) bySlot.set(key, [])
+      bySlot.get(key)!.push(e)
+    }
+  }
+
+  for (const [, byDay] of index) {
+    for (const [day, bySubject] of byDay) {
+      for (const [, bySlot] of bySubject) {
+        if (bySlot.size <= 1) continue
+        // Same subject appears at 2+ distinct time slots on this day for this class
+        const allEntries = [...bySlot.values()].flat()
+        violations.push(hardViolation(
+          'CLASS_SUBJECT_TWICE_PER_DAY',
+          `Class has the same subject at ${bySlot.size} different slots on ${day}`,
+          allEntries.map(e => e.id),
+        ))
+      }
+    }
+  }
+
   return violations
 }
 
@@ -264,9 +426,12 @@ function makeViolation(
   }
 }
 
-/** Entries for a specific teacher */
+/** Entries for a specific teacher (checks both primary teacherId and lessonTeachers) */
 function teacherEntries(entries: EvalEntry[], teacherId: string) {
-  return entries.filter(e => e.lesson.teacherId === teacherId)
+  return entries.filter(e =>
+    e.lesson.teacherId === teacherId ||
+    (e.lesson.lessonTeachers ?? []).some(lt => lt.teacherId === teacherId)
+  )
 }
 
 /** Entries for a specific class */
@@ -449,20 +614,27 @@ const EVALUATORS: Partial<Record<RestrictionType, RestrictEvaluator>> = {
   },
 
   // B3: Class should not have same subject more than once per day
+  // Uses the same slot-key deduplication as D7: multiple group entries at the SAME
+  // (day, slot) count as one occurrence (students are in exactly one group).
   [RestrictionType.CLASS_NO_SUBJECT_TWICE_PER_DAY]: (r, entries) => {
     if (!r.classId) return []
     const violations: Violation[] = []
     for (const [day, dayEntries] of byDay(classEntries(entries, r.classId))) {
-      const subjectCounts = new Map<string, EvalEntry[]>()
+      // Group by subjectId → then by slotKey
+      const subjectSlots = new Map<string, Map<string, EvalEntry[]>>()
       for (const e of dayEntries) {
-        if (!subjectCounts.has(e.lesson.subjectId)) subjectCounts.set(e.lesson.subjectId, [])
-        subjectCounts.get(e.lesson.subjectId)!.push(e)
+        if (!subjectSlots.has(e.lesson.subjectId)) subjectSlots.set(e.lesson.subjectId, new Map())
+        const bySlot = subjectSlots.get(e.lesson.subjectId)!
+        const key = `${e.day}:${e.slot}`
+        if (!bySlot.has(key)) bySlot.set(key, [])
+        bySlot.get(key)!.push(e)
       }
-      for (const [subjectId, subjectEntries] of subjectCounts) {
-        if (subjectEntries.length > 1) {
+      for (const [, bySlot] of subjectSlots) {
+        if (bySlot.size > 1) {
+          const allEntries = [...bySlot.values()].flat()
           violations.push(makeViolation(r,
             `Class has the same subject more than once on ${day}`,
-            subjectEntries.map(e => e.id),
+            allEntries.map(e => e.id),
           ))
         }
       }
@@ -546,27 +718,55 @@ const EVALUATORS: Partial<Record<RestrictionType, RestrictEvaluator>> = {
       .map(e => makeViolation(r, `Lesson is preferred in the afternoon (slots 3+)`, [e.id]))
   },
 
-  // E5: Grade sync — all classes in grade must have this lesson at the same slot
+  // E5: Grade sync — all classes in the grade must have this subject at the same slots.
+  //
+  // Correct semantics: for every (day, slot) where any class in the grade has this
+  // subject, ALL classes in the grade must also have it there.
+  //
+  // This replaces the old "slotGroups.size > 1" check which incorrectly fired
+  // whenever a lesson had hoursPerWeek > 1 (multi-hour lessons legitimately occupy
+  // multiple (day, slot) pairs — that is NOT a sync violation).
   [RestrictionType.LESSON_GRADE_SYNC]: (r, entries) => {
     if (!r.subjectId || !r.gradeId) return []
-    const violations: Violation[] = []
-    // Find all entries for this subject in the given grade
+
+    // All entries for this subject whose lesson touches the given grade
     const gradeSubjectEntries = entries.filter(e =>
       e.lesson.subjectId === r.subjectId &&
-      e.lesson.classes.some(c => c.gradeId === r.gradeId)
+      e.lesson.classes.some(c => c.gradeId === r.gradeId),
     )
-    // Group by (day, slot) — all should land in the same group
-    const slotGroups = new Map<string, EvalEntry[]>()
+    if (gradeSubjectEntries.length === 0) return []
+
+    // Collect every class ID in this grade that is enrolled in this subject
+    const allGradeClassIds = new Set<string>()
+    for (const e of gradeSubjectEntries) {
+      for (const c of e.lesson.classes) {
+        if (c.gradeId === r.gradeId) allGradeClassIds.add(c.id)
+      }
+    }
+    // Only one class has this subject — nothing to sync
+    if (allGradeClassIds.size <= 1) return []
+
+    // For each (day, slot) bucket, which class IDs are represented?
+    const slotData = new Map<string, { classIds: Set<string>; entryIds: string[] }>()
     for (const e of gradeSubjectEntries) {
       const key = `${e.day}:${e.slot}`
-      if (!slotGroups.has(key)) slotGroups.set(key, [])
-      slotGroups.get(key)!.push(e)
+      if (!slotData.has(key)) slotData.set(key, { classIds: new Set(), entryIds: [] })
+      const bucket = slotData.get(key)!
+      bucket.entryIds.push(e.id)
+      for (const c of e.lesson.classes) {
+        if (c.gradeId === r.gradeId) bucket.classIds.add(c.id)
+      }
     }
-    if (slotGroups.size > 1) {
-      violations.push(makeViolation(r,
-        `Not all classes in the grade have this subject at the same time`,
-        gradeSubjectEntries.map(e => e.id),
-      ))
+
+    // A slot is a violation if it doesn't cover all classes
+    const violations: Violation[] = []
+    for (const [key, { classIds, entryIds }] of slotData) {
+      if (classIds.size < allGradeClassIds.size) {
+        violations.push(makeViolation(r,
+          `Not all classes in the grade have this subject at the same time (${key})`,
+          entryIds,
+        ))
+      }
     }
     return violations
   },

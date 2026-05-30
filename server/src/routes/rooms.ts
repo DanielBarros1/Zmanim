@@ -39,12 +39,15 @@ roomsRouter.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
 
 roomsRouter.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const inUse = await prisma.scheduleEntry.count({ where: { roomId: req.params.id } })
-    if (inUse > 0) {
-      res.status(409).json({ error: 'Room is assigned to schedule entries and cannot be deleted.' })
-      return
-    }
-    await prisma.room.delete({ where: { id: req.params.id } })
+    const id = req.params.id
+
+    // Null out schedule entries that reference this room (keep entries, just unset room)
+    await prisma.scheduleEntry.updateMany({ where: { roomId: id }, data: { roomId: null } })
+
+    // Null out subjects that use this as their specialized room
+    await prisma.subject.updateMany({ where: { specializedRoomId: id }, data: { specializedRoomId: null } })
+
+    await prisma.room.delete({ where: { id } })
     res.status(204).send()
   } catch (err) { next(err) }
 })

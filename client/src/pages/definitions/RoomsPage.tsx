@@ -40,11 +40,13 @@ function RoomForm({
   onSave,
   onCancel,
   loading,
+  error,
 }: {
   initial: FormState
   onSave: (f: FormState) => void
   onCancel: () => void
   loading: boolean
+  error?: string
 }) {
   const [form, setForm] = useState(initial)
 
@@ -73,6 +75,12 @@ function RoomForm({
         <option value={RoomCapacity.STANDARD}>Standard</option>
         <option value={RoomCapacity.LARGE}>Large (for shared lessons)</option>
       </Select>
+      {error && (
+        <p className="text-[12px] text-red-500 rounded-md px-3 py-2" style={{ background: 'var(--warn-bg)' }}>
+          {error}
+        </p>
+      )}
+
       <div className="flex justify-end gap-2 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
@@ -94,29 +102,50 @@ export function RoomsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRoom, setEditingRoom] = useState<Room | null>(null)
   const [deletingRoom, setDeletingRoom] = useState<Room | null>(null)
+  const [deleteError, setDeleteError] = useState<string | undefined>()
+  const [createError, setCreateError] = useState<string>()
+  const [editError, setEditError] = useState<string>()
 
   const handleCreate = async (form: FormState) => {
-    await createRoom.mutateAsync({ name: form.name.trim(), capacity: form.capacity })
-    setModalOpen(false)
+    setCreateError(undefined)
+    try {
+      await createRoom.mutateAsync({ name: form.name.trim(), capacity: form.capacity })
+      setModalOpen(false)
+    } catch (err: any) {
+      setCreateError(err?.response?.data?.error ?? 'Failed to save room.')
+    }
   }
 
   const handleUpdate = async (form: FormState) => {
     if (!editingRoom) return
-    await updateRoom.mutateAsync({
-      id: editingRoom.id,
-      data: { name: form.name.trim(), capacity: form.capacity },
-    })
-    setEditingRoom(null)
+    setEditError(undefined)
+    try {
+      await updateRoom.mutateAsync({
+        id: editingRoom.id,
+        data: { name: form.name.trim(), capacity: form.capacity },
+      })
+      setEditingRoom(null)
+    } catch (err: any) {
+      setEditError(err?.response?.data?.error ?? 'Failed to update room.')
+    }
   }
 
   const handleDelete = async () => {
     if (!deletingRoom) return
-    await deleteRoom.mutateAsync(deletingRoom.id)
-    setDeletingRoom(null)
+    setDeleteError(undefined)
+    try {
+      await deleteRoom.mutateAsync(deletingRoom.id)
+      setDeletingRoom(null)
+      setDeleteError(undefined)
+    } catch (err: any) {
+      setDeleteError(err?.response?.data?.error ?? 'Failed to delete room.')
+    }
   }
 
-  const standardRooms = rooms.filter(r => r.capacity === RoomCapacity.STANDARD)
-  const largeRooms = rooms.filter(r => r.capacity === RoomCapacity.LARGE)
+  const [search, setSearch] = useState('')
+  const filteredRooms = rooms.filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
+  const standardRooms = filteredRooms.filter(r => r.capacity === RoomCapacity.STANDARD)
+  const largeRooms = filteredRooms.filter(r => r.capacity === RoomCapacity.LARGE)
 
   if (isLoading) {
     return (
@@ -167,6 +196,15 @@ export function RoomsPage() {
           action={<Button onClick={() => setModalOpen(true)}>+ New Room</Button>}
         />
       ) : (
+        <>
+          <input
+            type="search"
+            placeholder="Search rooms…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="mb-3 w-full max-w-xs rounded-md px-3 py-1.5 text-[13px]"
+            style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-1)' }}
+          />
         <div className="space-y-6">
           {largeRooms.length > 0 && (
             <div>
@@ -189,41 +227,49 @@ export function RoomsPage() {
             </div>
           )}
         </div>
+        </>
       )}
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="New Room">
+      <Modal
+        open={modalOpen}
+        onClose={() => { setModalOpen(false); setCreateError(undefined) }}
+        title="New Room"
+      >
         <RoomForm
           initial={EMPTY_FORM}
           onSave={handleCreate}
-          onCancel={() => setModalOpen(false)}
+          onCancel={() => { setModalOpen(false); setCreateError(undefined) }}
           loading={createRoom.isPending}
+          error={createError}
         />
       </Modal>
 
       <Modal
         open={!!editingRoom}
-        onClose={() => setEditingRoom(null)}
+        onClose={() => { setEditingRoom(null); setEditError(undefined) }}
         title="Edit Room"
       >
         {editingRoom && (
           <RoomForm
             initial={{ name: editingRoom.name, capacity: editingRoom.capacity }}
             onSave={handleUpdate}
-            onCancel={() => setEditingRoom(null)}
+            onCancel={() => { setEditingRoom(null); setEditError(undefined) }}
             loading={updateRoom.isPending}
+            error={editError}
           />
         )}
       </Modal>
 
       <ConfirmDialog
         open={!!deletingRoom}
-        onClose={() => setDeletingRoom(null)}
+        onClose={() => { setDeletingRoom(null); setDeleteError(undefined) }}
         onConfirm={handleDelete}
         title={`Delete "${deletingRoom?.name}"?`}
-        description="Removing this room won't remove existing placements, but those placements may no longer have a valid room assigned."
+        description="Existing schedule placements will keep their slot but lose their room assignment."
         confirmLabel="Delete Room"
         danger
         loading={deleteRoom.isPending}
+        error={deleteError}
       />
     </AppShell>
   )
