@@ -290,6 +290,37 @@ export function useRemoveOverride(scheduleId: string) {
   })
 }
 
+// ── Suggest fix ─────────────────────────────────────────────────
+
+export interface FixSuggestion {
+  entryId: string
+  entryLabel: string
+  fromDay: string
+  fromSlot: number
+  toDay: string
+  toSlot: number
+  description: string
+  improvement: number
+}
+
+/**
+ * POST /api/schedules/:id/suggest-fix
+ * Given a violation, returns up to 3 move operations that would improve/resolve it.
+ * This is a one-shot mutation (not a query) because the computation is on-demand.
+ */
+export function useSuggestFix(scheduleId: string) {
+  return useMutation({
+    mutationFn: (body: {
+      violationType: string
+      affectedEntryIds: string[]
+      restrictionId?: string | null
+    }) =>
+      apiClient
+        .post<FixSuggestion[]>(`/api/schedules/${scheduleId}/suggest-fix`, body)
+        .then(r => r.data),
+  })
+}
+
 // ── Auto-Scheduler ──────────────────────────────────────────────
 
 /** Matches the server's POST /api/schedules/auto body schema exactly */

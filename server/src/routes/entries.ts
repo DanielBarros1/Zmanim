@@ -18,6 +18,7 @@ import { prisma } from '../db'
 import { requireAuth, requireAdmin } from '../middleware/auth'
 import { evaluate } from '../services/evaluator'
 import { autoAssignRoom } from '../services/roomAssignment'
+import { suggestFix } from '../services/suggestFix'
 
 export const entriesRouter = Router()
 
@@ -262,6 +263,64 @@ entriesRouter.patch('/:id/entries/:entryId/seed', requireAuth, requireAdmin, asy
       include: { overrides: true },
     })
     res.json(entry)
+  } catch (err) { next(err) }
+})
+
+// ─── Suggest fix ──────────────────────────────────────────────
+
+/**
+ * POST /api/schedules/:id/suggest-fix
+ *
+ * Given a violation type + the affected entry IDs, returns up to 3 concrete
+ * move operations that would improve or resolve the violation.
+ *
+ * The computation is entirely in-memory (no DB writes). The evaluator is run
+ * once per candidate move to compare scores. See services/suggestFix.ts for
+ * the full algorithm and supported violation types.
+ */
+entriesRouter.post('/:id/suggest-fix', requireAuth, async (req, res, next) => {
+  try {
+    const scheduleId = req.params.id
+    const body = z.object({
+      violationType:    z.string(),
+      affectedEntryIds: z.array(z.string().uuid()),
+      restrictionId:    z.string().uuid().nullable().optional(),
+    }).parse(req.body)
+
+    // Load all data needed by the suggestion engine (same as runEvaluation)
+    const [schedule, lessons, restrictions, config] = await Promise.all([
+      prisma.schedule.findUniqueOrThrow({
+        where: { id: scheduleId },
+        include: { entries: { include: { overrides: true } } },
+      }),
+      prisma.lesson.findMany({
+        include: { classes: true, subject: true, grade: true, lessonTeachers: true, teacher: true },
+      }),
+      prisma.restriction.findMany({ where: { isActive: true } }),
+      prisma.schoolConfig.findFirst(),
+    ])
+
+    if (!config) {
+      res.json([])
+      return
+    }
+
+    // Enrich entries with their lesson objects (same join as runEvaluation)
+    const lessonMap = new Map(lessons.map(l => [l.id, l]))
+    const enrichedEntries = schedule.entries
+      .map(e => ({ ...e, lesson: lessonMap.get(e.lessonId) }))
+      .filter(e => e.lesson != null) as any[]
+
+    const suggestions = suggestFix({
+      violationType:    body.violationType,
+      affectedEntryIds: body.affectedEntryIds,
+      entries:          enrichedEntries,
+      lessons:          lessons as any[],
+      restrictions:     restrictions as any[],
+      config:           { slotsPerDay: config.slotsPerDay, workDays: config.workDays as string[] },
+    })
+
+    res.json(suggestions)
   } catch (err) { next(err) }
 })
 

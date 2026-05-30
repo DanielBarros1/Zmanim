@@ -220,15 +220,99 @@ export function ScheduleEditorPage() {
   // origins can be mis-attributed between the two scroll layers.  A raw
   // pointermove listener is always pixel-accurate.
   const dragPointerRef = useRef({ x: 0, y: 0 })
+
+  // ── Drag-conflict nudge tooltip ──────────────────────────────────
+  // Pre-computed during handleDragStart alongside cellValidity.
+  // Key: `${day}:${slot}:${classId}`, value: tooltip text or null.
+  // Null means "no tooltip for this cell" (valid / soft cells stay clean).
+  // The tooltip DOM element is updated directly (no React state) so pointer
+  // movement causes zero re-renders.
+  const cellReasonsRef  = useRef<Map<string, string>>(new Map())
+  const tooltipRef      = useRef<HTMLDivElement>(null)
+  const lastCellKeyRef  = useRef<string>('')
+
   useEffect(() => {
     const track = (e: PointerEvent) => {
       dragPointerRef.current = { x: e.clientX, y: e.clientY }
+
+      // ── Tooltip update (direct DOM, zero re-renders) ────────────────
+      const tooltip = tooltipRef.current
+      if (!tooltip) return
+
+      // Only show tooltip when cell reasons are populated (i.e. during a drag)
+      if (cellReasonsRef.current.size === 0) {
+        tooltip.style.display = 'none'
+        lastCellKeyRef.current = ''
+        return
+      }
+
+      // Hit-test the element stack at the current pointer position
+      const elements = document.elementsFromPoint(e.clientX, e.clientY)
+      let cellEl: Element | null = null
+      for (const el of elements) {
+        const candidate = el.closest('[data-cell-day]')
+        if (candidate) {
+          const rect = candidate.getBoundingClientRect()
+          if (
+            e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top  && e.clientY <= rect.bottom
+          ) {
+            cellEl = candidate
+            break
+          }
+        }
+      }
+
+      if (!cellEl) {
+        tooltip.style.display = 'none'
+        lastCellKeyRef.current = ''
+        return
+      }
+
+      const day     = cellEl.getAttribute('data-cell-day')
+      const slot    = cellEl.getAttribute('data-cell-slot')
+      const classId = cellEl.getAttribute('data-cell-class-id')
+      if (!day || !slot || !classId) {
+        tooltip.style.display = 'none'
+        return
+      }
+
+      const cellKey = `${day}:${slot}:${classId}`
+
+      // Only update content when the cell changes (text update is still direct DOM)
+      if (cellKey !== lastCellKeyRef.current) {
+        lastCellKeyRef.current = cellKey
+        const reason = cellReasonsRef.current.get(cellKey)
+        if (!reason) {
+          tooltip.style.display = 'none'
+          return
+        }
+        tooltip.textContent = reason
+      }
+
+      // Always update position on every move
+      const reason = cellReasonsRef.current.get(cellKey)
+      if (!reason) {
+        tooltip.style.display = 'none'
+        return
+      }
+      tooltip.style.display = 'block'
+      tooltip.style.left    = `${e.clientX + 16}px`
+      tooltip.style.top     = `${e.clientY - 36}px`
     }
+
     // Capture phase ensures we see the event before any scroll container can
     // consume or re-target it.
     window.addEventListener('pointermove', track, { capture: true, passive: true })
     return () => window.removeEventListener('pointermove', track, true)
   }, [])
+
+  /** Hide the tooltip and clear cell reasons — called on drag end / cancel */
+  const clearDragTooltip = () => {
+    cellReasonsRef.current = new Map()
+    lastCellKeyRef.current = ''
+    if (tooltipRef.current) tooltipRef.current.style.display = 'none'
+  }
 
   // Per-cell drop validity — computed when a pool lesson is picked up.
   // Key: `${day}:${slot}:${classId}`, value: 'valid' | 'blocked' | 'impossible'.
@@ -367,10 +451,14 @@ export function ScheduleEditorPage() {
         // source slot doesn't appear as a self-conflict.
         const excludeEntryId = d.type === 'entry' ? d.entryId : undefined
 
-        const validity = new Map<string, CellValidity>()
+        const validity  = new Map<string, CellValidity>()
+        const newReasons = new Map<string, string>()
 
         // First pass: compute per-(day,slot) validity using the client evaluator.
+        // Also collect the first violation message for blocked/soft cells (tooltip reasons).
         const daySlotValidity = new Map<string, 'valid' | 'soft' | 'blocked'>()
+        const daySlotReason   = new Map<string, string>()
+
         for (const day of workDays) {
           for (let slot = 1; slot <= config.slotsPerDay; slot++) {
             const violations = checkProposed({
@@ -378,12 +466,20 @@ export function ScheduleEditorPage() {
               lessons,
               proposed: { lessonId: lesson.id, day: day as Day, slot, excludeEntryId },
             })
-            // All client-side violations (D1–D4) are NON_NEGOTIABLE → red.
-            // 'soft' (amber) is reserved for preference/soft restrictions that
-            // the client evaluator doesn't yet check (teacher unavailability etc.).
-            // All client-side violations are INVARIANT tier — any violation blocks the cell.
-            const hasHardBlock = violations.some(v => v.tier === RestrictionTier.INVARIANT)
-            daySlotValidity.set(`${day}:${slot}`, hasHardBlock ? 'blocked' : 'valid')
+            // All client-side violations (D1–D4) are INVARIANT tier → red blocked cell.
+            // 'soft' (amber) would be for simultaneity warnings (not currently generated).
+            const hardViol = violations.find(v => v.tier === RestrictionTier.INVARIANT)
+            const softViol = violations.find(v => v.tier !== RestrictionTier.INVARIANT)
+
+            if (hardViol) {
+              daySlotValidity.set(`${day}:${slot}`, 'blocked')
+              daySlotReason.set(`${day}:${slot}`, `⛔ ${hardViol.message}`)
+            } else if (softViol) {
+              daySlotValidity.set(`${day}:${slot}`, 'soft')
+              daySlotReason.set(`${day}:${slot}`, `⚠ ${softViol.message}`)
+            } else {
+              daySlotValidity.set(`${day}:${slot}`, 'valid')
+            }
           }
         }
 
@@ -396,14 +492,19 @@ export function ScheduleEditorPage() {
               const key = `${day}:${slot}:${cls.id}`
               if (!lesson.classIds.includes(cls.id)) {
                 validity.set(key, 'impossible')
+                // No tooltip for impossible cells — the dimmed style is self-explanatory
               } else {
-                validity.set(key, daySlotValidity.get(`${day}:${slot}`) ?? 'blocked')
+                const v = daySlotValidity.get(`${day}:${slot}`) ?? 'blocked'
+                validity.set(key, v)
+                const reason = daySlotReason.get(`${day}:${slot}`)
+                if (reason) newReasons.set(key, reason)
               }
             }
           }
         }
 
         setCellValidity(validity)
+        cellReasonsRef.current = newReasons
       }
     },
     [lessons, subjects, entries, workDays, config, classes, clearHighlight],
@@ -413,13 +514,15 @@ export function ScheduleEditorPage() {
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {
     setActiveDrag(null)
     setCellValidity(null)
-  }, [])
+    clearDragTooltip()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
-      // Always clear the overlay and validity map immediately so UI is responsive
+      // Always clear the overlay, validity map, and tooltip immediately so UI is responsive
       setActiveDrag(null)
       setCellValidity(null)
+      clearDragTooltip()
 
       const { active } = event
 
@@ -965,6 +1068,29 @@ export function ScheduleEditorPage() {
       <DragOverlay>
         {activeDrag && <DragPill label={activeDrag.label} />}
       </DragOverlay>
+
+      {/* Drag-conflict nudge tooltip — positioned via direct DOM, never via React state */}
+      <div
+        ref={tooltipRef}
+        style={{
+          display:         'none',
+          position:        'fixed',
+          zIndex:          9999,
+          pointerEvents:   'none',
+          maxWidth:        240,
+          padding:         '5px 10px',
+          borderRadius:    6,
+          fontSize:        11,
+          lineHeight:      1.45,
+          fontWeight:      500,
+          background:      'rgba(15, 23, 42, 0.92)',
+          color:           '#f1f5f9',
+          boxShadow:       '0 4px 12px rgba(0,0,0,0.3)',
+          backdropFilter:  'blur(4px)',
+          whiteSpace:      'pre-line',
+          wordBreak:       'break-word',
+        }}
+      />
 
       {/* Violation confirm modal */}
       <ViolationConfirmModal
