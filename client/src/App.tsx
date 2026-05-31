@@ -4,7 +4,8 @@
  * Route structure:
  *   /login                     — unauthenticated landing
  *   / (AuthGuard)
- *     /                        — HomePage (schedule list)
+ *     /                        — LandingPage (stats + compact schedule preview)
+ *     /schedules               — HomePage (schedule list + management)
  *     /schedules/:id           — ScheduleEditorPage
  *     /definitions/config      — ConfigPage
  *     /definitions/subjects    — SubjectsPage
@@ -24,6 +25,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthGuard } from './components/layout/AuthGuard'
 import { ErrorBoundary } from './components/layout/ErrorBoundary'
 import { LoginPage } from './pages/LoginPage'
+import { LandingPage } from './pages/LandingPage'
 import { HomePage } from './pages/HomePage'
 import { ScheduleEditorPage } from './pages/ScheduleEditorPage'
 import { ConfigPage } from './pages/definitions/ConfigPage'
@@ -51,7 +53,8 @@ export default function App() {
           <AuthGuard>
             <ErrorBoundary>
               <Routes>
-                <Route path="/" element={<HomePage />} />
+                <Route path="/" element={<LandingPage />} />
+                <Route path="/schedules" element={<HomePage />} />
                 <Route path="/schedules/:id" element={<ScheduleEditorPage />} />
 
                 {/* Definitions */}

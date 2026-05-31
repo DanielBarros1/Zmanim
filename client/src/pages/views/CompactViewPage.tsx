@@ -2,8 +2,8 @@
  * CompactViewPage — printable, color-coded schedule overview.
  *
  * Shows the full school week in a compact format:
- *   - All 12 classes as rows
- *   - All 5 days × 4 slots = 20 cells per class
+ *   - All 12 classes as columns (grouped by grade)
+ *   - All days × slots as rows
  *   - Each cell is a colored square (subject color) with abbreviated text
  *
  * Designed for printing or sharing as a PDF.
@@ -104,99 +104,98 @@ export function CompactViewPage() {
       }
     >
       <div className="overflow-auto">
-        <table className="border-collapse text-[11px]" style={{ minWidth: 1100 }}>
+        <table className="border-collapse text-[11px]">
           <thead>
-            {/* Day × slot header */}
+            {/* Class columns header — grouped by grade */}
             <tr style={{ background: 'var(--surface-2)' }}>
               <th
                 className="text-left px-3 py-2 text-[10px] font-bold uppercase"
-                style={{ color: 'var(--text-3)', borderBottom: '3px solid var(--border)', borderRight: '3px solid var(--border)', width: 72 }}
+                style={{ color: 'var(--text-3)', borderBottom: '3px solid var(--border)', borderRight: '3px solid var(--border)', width: 56 }}
               >
-                Class
+                Slot
               </th>
-              {workDays.flatMap(day =>
-                slots.map(slot => (
+              {gradeClasses.flatMap(({ grade, classes: gc }, gradeIdx) =>
+                gc.map((cls, clsIdx) => (
                   <th
-                    key={`${day}-${slot}`}
+                    key={cls.id}
                     className="text-center px-1 py-2 text-[10px] font-bold"
                     style={{
-                      color: slot === 1 ? 'var(--text-1)' : 'var(--text-3)',
+                      color: 'var(--text-1)',
                       borderBottom: '3px solid var(--border)',
-                      // Left edge of each day: strong dark separator
-                      borderLeft: slot === 1 ? '3px solid #4B5563' : undefined,
-                      borderRight: slot === slots[slots.length - 1]
-                        ? '3px solid #4B5563'
-                        : '1px solid var(--border)',
-                      minWidth: 52,
-                      background: slot === 1 ? 'var(--accent-bg)' : 'var(--surface-2)',
+                      // Left edge of each grade group: strong separator
+                      borderLeft: clsIdx === 0 ? '3px solid #4B5563' : undefined,
+                      borderRight: clsIdx === gc.length - 1 ? '3px solid #4B5563' : '1px solid var(--border)',
+                      minWidth: 72,
+                      background: gradeIdx % 2 === 0 ? 'var(--surface-2)' : 'var(--accent-bg)',
                     }}
                   >
-                    {slot === 1 ? DAY_SHORT[day] : `S${slot}`}
+                    {grade.number}{cls.section}
                   </th>
-                )),
+                ))
               )}
             </tr>
           </thead>
           <tbody>
-            {gradeClasses.flatMap(({ grade, classes: gc }, gradeIdx) =>
-              gc.map((cls, clsIdx) => (
-                <tr
-                  key={cls.id}
-                  style={{
-                    background: gradeIdx % 2 === 0 ? 'var(--surface)' : 'var(--surface-2)',
-                    // Thicker border between grades (only on last class of each grade)
-                    borderBottom: clsIdx === gc.length - 1 ? '2px solid var(--border)' : undefined,
-                  }}
-                >
-                  <td
-                    className="px-3 py-1.5 font-bold text-[11px]"
+            {workDays.flatMap((day, dayIdx) =>
+              slots.map(slot => {
+                const isFirstSlot = slot === 1
+                const isLastSlot = slot === slots[slots.length - 1]
+                return (
+                  <tr
+                    key={`${day}-${slot}`}
                     style={{
-                      borderBottom: clsIdx === gc.length - 1
-                        ? '2px solid var(--border)'
-                        : '1px solid var(--border)',
-                      borderRight: '3px solid var(--border)',
-                      color: 'var(--text-1)',
+                      background: dayIdx % 2 === 0 ? 'var(--surface)' : 'var(--surface-2)',
                     }}
                   >
-                    {grade.number}{cls.section}
-                  </td>
-                  {workDays.flatMap(day =>
-                    slots.map(slot => {
-                      const cell = cellMap[cls.id]?.[day]?.[slot]
-                      const isLastSlot = slot === slots[slots.length - 1]
-                      const isLastClass = clsIdx === gc.length - 1
-                      return (
-                        <td
-                          key={`${day}-${slot}`}
-                          className="px-0.5 py-0.5"
-                          style={{
-                            borderBottom: isLastClass ? '2px solid #6B7280' : '1px solid var(--border)',
-                            borderLeft:  slot === 1 ? '3px solid #4B5563' : undefined,
-                            borderRight: isLastSlot  ? '3px solid #4B5563' : '1px solid var(--border)',
-                            height: 44,
-                            width: 52,
-                          }}
-                        >
-                          {cell ? (
-                            <div
-                              className="w-full h-full rounded flex items-center justify-center text-white text-[9px] font-bold leading-tight px-0.5 text-center"
-                              style={{ background: cell.color }}
-                              title={cell.name}
-                            >
-                              {cell.name.slice(0, 4)}
-                            </div>
-                          ) : (
-                            <div
-                              className="w-full h-full rounded"
-                              style={{ background: 'var(--empty-bg)' }}
-                            />
-                          )}
-                        </td>
-                      )
-                    }),
-                  )}
-                </tr>
-              )),
+                    {/* Row label: day name on first slot, slot number otherwise */}
+                    <td
+                      className="px-3 py-1.5 font-bold text-[11px] text-center"
+                      style={{
+                        borderTop: isFirstSlot ? '3px solid #4B5563' : undefined,
+                        borderBottom: isLastSlot ? '3px solid #4B5563' : '1px solid var(--border)',
+                        borderRight: '3px solid var(--border)',
+                        color: isFirstSlot ? 'var(--text-1)' : 'var(--text-3)',
+                      }}
+                    >
+                      {isFirstSlot ? DAY_SHORT[day] : `S${slot}`}
+                    </td>
+                    {gradeClasses.flatMap(({ classes: gc }, gradeIdx) =>
+                      gc.map((cls, clsIdx) => {
+                        const cell = cellMap[cls.id]?.[day]?.[slot]
+                        return (
+                          <td
+                            key={cls.id}
+                            className="px-0.5 py-0.5"
+                            style={{
+                              borderTop: isFirstSlot ? '3px solid #4B5563' : undefined,
+                              borderBottom: isLastSlot ? '3px solid #4B5563' : '1px solid var(--border)',
+                              borderLeft: clsIdx === 0 ? '3px solid #4B5563' : undefined,
+                              borderRight: clsIdx === gc.length - 1 ? '3px solid #4B5563' : '1px solid var(--border)',
+                              height: 48,
+                              width: 72,
+                            }}
+                          >
+                            {cell ? (
+                              <div
+                                className="w-full h-full rounded flex items-center justify-center text-white text-[9px] font-bold leading-tight px-0.5 text-center"
+                                style={{ background: cell.color }}
+                                title={cell.name}
+                              >
+                                {cell.name}
+                              </div>
+                            ) : (
+                              <div
+                                className="w-full h-full rounded"
+                                style={{ background: 'var(--empty-bg)' }}
+                              />
+                            )}
+                          </td>
+                        )
+                      })
+                    )}
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>

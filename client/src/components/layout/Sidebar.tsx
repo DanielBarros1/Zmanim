@@ -35,7 +35,8 @@ const DEFINITIONS_NAV: NavItem[] = [
 ]
 
 const SCHEDULE_NAV: NavItem[] = [
-  { to: '/', label: 'All Schedules', icon: '🗓️' },
+  { to: '/',          label: 'Home',          icon: '🏠' },
+  { to: '/schedules', label: 'All Schedules', icon: '🗓️' },
 ]
 
 const VIEWS_NAV: NavItem[] = [
