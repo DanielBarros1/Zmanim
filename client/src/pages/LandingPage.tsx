@@ -43,7 +43,7 @@ function StatCard({
 }) {
   return (
     <div
-      className="rounded-xl border p-4 flex flex-col items-center gap-1 min-w-[96px]"
+      className="rounded-xl border p-4 flex flex-col items-center gap-1"
       style={{
         background: accent ? 'var(--accent-bg)' : 'var(--surface)',
         borderColor: accent ? 'var(--accent)' : 'var(--border)',
@@ -132,8 +132,11 @@ export function LandingPage() {
 
   return (
     <AppShell title="Home">
-      {/* ── Stats row ───────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-3 mb-8">
+      {/* ── Stats grid — fills full width evenly ────────────────────── */}
+      <div
+        className="grid gap-3 mb-6"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}
+      >
         <StatCard icon="🎓" value={classes.length} label="Classes" />
         <StatCard icon="👩‍🏫" value={teachers.length} label="Teachers" />
         <StatCard icon="📚" value={subjects.length} label="Subjects" />
@@ -150,36 +153,7 @@ export function LandingPage() {
         {scheduleId && <ViolationStat scheduleId={scheduleId} />}
       </div>
 
-      {/* ── Schedule preview ────────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[14px] font-semibold text-[var(--text-1)]">
-          {publishedSchedule
-            ? `★ ${publishedSchedule.name}`
-            : schedules.length > 0
-            ? 'Schedule Preview'
-            : 'No schedules yet'}
-        </h2>
-        <div className="flex items-center gap-2">
-          {schedules.length > 0 && (
-            <Select
-              value={scheduleId}
-              onChange={e => setSelectedId(e.target.value)}
-              className="w-52"
-            >
-              {schedules.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                  {s.state === ScheduleState.PUBLISHED ? ' ★' : ''}
-                </option>
-              ))}
-            </Select>
-          )}
-          <Button variant="secondary" size="sm" onClick={() => navigate('/views/compact')}>
-            Full View →
-          </Button>
-        </div>
-      </div>
-
+      {/* ── Schedule card ───────────────────────────────────────────── */}
       {schedulesLoading ? (
         <CenteredSpinner />
       ) : schedules.length === 0 ? (
@@ -193,8 +167,38 @@ export function LandingPage() {
           <Button onClick={() => navigate('/schedules')}>Go to Schedules →</Button>
         </div>
       ) : (
-        <>
-          <div className="overflow-auto rounded-xl border" style={{ borderColor: 'var(--border)' }}>
+        <div
+          className="rounded-xl border overflow-hidden"
+          style={{ borderColor: 'var(--border)', boxShadow: 'var(--card-shadow)' }}
+        >
+          {/* Card header */}
+          <div
+            className="flex items-center justify-between px-4 py-3 border-b"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
+          >
+            <h2 className="text-[13px] font-semibold text-[var(--text-1)]">
+              {publishedSchedule ? `★ ${publishedSchedule.name}` : 'Schedule Preview'}
+            </h2>
+            <div className="flex items-center gap-2">
+              <Select
+                value={scheduleId}
+                onChange={e => setSelectedId(e.target.value)}
+                className="w-48 text-[12px]"
+              >
+                {schedules.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}{s.state === ScheduleState.PUBLISHED ? ' ★' : ''}
+                  </option>
+                ))}
+              </Select>
+              <Button variant="secondary" size="sm" onClick={() => navigate('/views/compact')}>
+                Full View →
+              </Button>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-x-auto" style={{ background: 'var(--surface)' }}>
             {entriesLoading ? (
               <div className="p-8 flex justify-center"><CenteredSpinner /></div>
             ) : (
@@ -207,7 +211,7 @@ export function LandingPage() {
                         color: 'var(--text-3)',
                         borderBottom: '3px solid var(--border)',
                         borderRight: '3px solid var(--border)',
-                        width: 56,
+                        width: 52,
                       }}
                     >
                       Slot
@@ -250,7 +254,7 @@ export function LandingPage() {
                           }}
                         >
                           <td
-                            className="px-3 py-1.5 font-bold text-[11px] text-center"
+                            className="px-3 py-1 font-bold text-[11px] text-center"
                             style={{
                               borderTop: isFirstSlot ? '3px solid #4B5563' : undefined,
                               borderBottom: isLastSlot
@@ -279,7 +283,7 @@ export function LandingPage() {
                                       clsIdx === gc.length - 1
                                         ? '3px solid #4B5563'
                                         : '1px solid var(--border)',
-                                    height: 48,
+                                    height: 36,
                                     width: 72,
                                   }}
                                 >
@@ -310,16 +314,19 @@ export function LandingPage() {
             )}
           </div>
 
-          {/* Subject legend */}
-          <div className="mt-4 flex flex-wrap gap-3">
+          {/* Legend */}
+          <div
+            className="px-4 py-3 border-t flex flex-wrap gap-3"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
+          >
             {subjects.map(s => (
               <div key={s.id} className="flex items-center gap-1.5">
-                <div className="w-3 h-3 rounded-sm" style={{ background: s.color }} />
+                <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: s.color }} />
                 <span className="text-[10px] text-[var(--text-2)] hebrew">{s.name}</span>
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
     </AppShell>
   )
