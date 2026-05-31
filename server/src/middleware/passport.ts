@@ -2,12 +2,20 @@
  * Passport.js configuration — Google OAuth 2.0
  *
  * On successful login:
- * 1. Verifies email domain against ALLOWED_EMAIL_DOMAIN env var
- * 2. Upserts the User record in Postgres (create on first login, update name on subsequent)
+ * 1. Checks email against the ALLOWED_EMAILS allowlist (if set)
+ * 2. Upserts the User record in Postgres (create on first login, update name/picture on subsequent)
  * 3. Stores user.id in the session (serialization)
  *
- * The ALLOWED_EMAIL_DOMAIN env var controls which Google Workspace is permitted.
- * Set to e.g. "ankori.edu" to restrict login to school accounts.
+ * Access control env vars (set in server/.env):
+ *
+ *   ALLOWED_EMAILS=alice@gmail.com,bob@gmail.com
+ *     Comma-separated list of Google accounts permitted to log in.
+ *     If empty or unset, any Google account can log in.
+ *
+ *   ALLOWED_EMAIL_DOMAIN=example.edu
+ *     Legacy domain-based restriction. If set, only emails ending in
+ *     @example.edu are allowed (takes effect alongside ALLOWED_EMAILS).
+ *     Leave empty unless you want Google Workspace domain restriction.
  */
 
 import passport from 'passport'
@@ -30,13 +38,26 @@ export function configurePassport() {
       async (_accessToken, _refreshToken, profile, done) => {
         try {
           const email = profile.emails?.[0]?.value
-          const allowedDomain = process.env.ALLOWED_EMAIL_DOMAIN
 
           if (!email) {
             return done(null, false, { message: 'No email returned from Google' })
           }
 
-          // Domain restriction — enforce school Google Workspace
+          // ── Email allowlist ────────────────────────────────────────────
+          // ALLOWED_EMAILS is a comma-separated list of permitted addresses.
+          // If the env var is set and non-empty, only those exact emails can
+          // log in. Unknown accounts are rejected before touching the DB.
+          const allowedEmails = (process.env.ALLOWED_EMAILS ?? '')
+            .split(',')
+            .map(e => e.trim().toLowerCase())
+            .filter(Boolean)
+
+          if (allowedEmails.length > 0 && !allowedEmails.includes(email.toLowerCase())) {
+            return done(null, false, { message: 'Your account is not authorised to access this app.' })
+          }
+
+          // ── Legacy domain restriction ──────────────────────────────────
+          const allowedDomain = process.env.ALLOWED_EMAIL_DOMAIN ?? ''
           if (allowedDomain && !email.endsWith(`@${allowedDomain}`)) {
             return done(null, false, {
               message: `Login restricted to @${allowedDomain} accounts`,
