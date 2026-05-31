@@ -197,13 +197,13 @@ export function LandingPage() {
             </div>
           </div>
 
-          {/* Table */}
-          <div className="overflow-x-auto" style={{ background: 'var(--surface)' }}>
+          {/* Table — max height so it's a preview, not a full dump */}
+          <div className="overflow-auto" style={{ background: 'var(--surface)', maxHeight: 420 }}>
             {entriesLoading ? (
               <div className="p-8 flex justify-center"><CenteredSpinner /></div>
             ) : (
               <table className="border-collapse text-[11px]">
-                <thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                   <tr style={{ background: 'var(--surface-2)' }}>
                     <th
                       className="text-left px-3 py-2 text-[10px] font-bold uppercase"
@@ -212,6 +212,7 @@ export function LandingPage() {
                         borderBottom: '3px solid var(--border)',
                         borderRight: '3px solid var(--border)',
                         width: 52,
+                        background: 'var(--surface-2)',
                       }}
                     >
                       Slot
@@ -285,12 +286,18 @@ export function LandingPage() {
                                         : '1px solid var(--border)',
                                     height: 36,
                                     width: 72,
+                                    overflow: 'hidden',
                                   }}
                                 >
                                   {cell ? (
                                     <div
-                                      className="w-full h-full rounded flex items-center justify-center text-white text-[9px] font-bold leading-tight px-0.5 text-center"
-                                      style={{ background: cell.color }}
+                                      className="w-full h-full rounded flex items-center justify-center text-white text-[9px] font-bold px-1"
+                                      style={{
+                                        background: cell.color,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                      }}
                                       title={cell.name}
                                     >
                                       {cell.name}
