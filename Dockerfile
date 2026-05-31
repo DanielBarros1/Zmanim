@@ -15,13 +15,17 @@ RUN npm install
 # Copy all source
 COPY . .
 
-# Build in dependency order: shared → client → server
+# Build in dependency order: shared → prisma → client → server
 RUN npm run build --workspace=shared
+
+# Generate Prisma client BEFORE tsc — the server's TypeScript compilation
+# depends on the generated @prisma/client types (enums, model shapes, etc).
+# Without this, tsc fails with "has no exported member 'Day'" and a cascade
+# of implicit-any errors in every Prisma query callback.
+RUN cd server && npx prisma generate
+
 RUN npm run build --workspace=client
 RUN npm run build --workspace=server
-
-# Pre-generate the Prisma client so the container starts instantly
-RUN cd server && npx prisma generate
 
 WORKDIR /app/server
 EXPOSE 3001
