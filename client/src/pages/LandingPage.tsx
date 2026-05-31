@@ -133,53 +133,62 @@ export function LandingPage() {
   return (
     <AppShell title="Home">
       {/*
-       * Outer centering wrapper.
-       * `width: max-content` makes this div shrink-wrap to the widest child
-       * (the schedule table). `mx-auto` then centers it horizontally in the
-       * content area. Everything inside — stats AND table — will be exactly
-       * as wide as the table, perfectly aligned, with no leftover empty space.
-       *
-       * On very narrow screens the AppShell already has `overflow-y-auto`, so
-       * horizontal overflow scrolls the page rather than clipping content.
+       * Stats: full-width grid. Cards stretch evenly across the entire
+       * content area regardless of how many there are (5–7 depending on
+       * which conditional cards render). These are deliberately NOT inside
+       * the table's centering wrapper — stat cards are wider than the table
+       * on most screens and would break the centering math.
        */}
-      <div style={{ width: 'max-content', margin: '0 auto' }}>
+      <div
+        className="grid gap-3 mb-6"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}
+      >
+        <StatCard icon="🎓" value={classes.length} label="Classes" />
+        <StatCard icon="👩‍🏫" value={teachers.length} label="Teachers" />
+        <StatCard icon="📚" value={subjects.length} label="Subjects" />
+        <StatCard icon="🏫" value={rooms.length} label="Rooms" />
+        <StatCard icon="📋" value={lessons.length} label="Lessons" />
+        {placementPct !== null && (
+          <StatCard
+            icon="📅"
+            value={`${placementPct}%`}
+            label="Placed"
+            accent={placementPct === 100}
+          />
+        )}
+        {scheduleId && <ViolationStat scheduleId={scheduleId} />}
+      </div>
 
-        {/* ── Stats row — stretches to match the table width below ─────── */}
-        <div className="flex gap-3 mb-6">
-          <StatCard icon="🎓" value={classes.length} label="Classes" />
-          <StatCard icon="👩‍🏫" value={teachers.length} label="Teachers" />
-          <StatCard icon="📚" value={subjects.length} label="Subjects" />
-          <StatCard icon="🏫" value={rooms.length} label="Rooms" />
-          <StatCard icon="📋" value={lessons.length} label="Lessons" />
-          {placementPct !== null && (
-            <StatCard
-              icon="📅"
-              value={`${placementPct}%`}
-              label="Placed"
-              accent={placementPct === 100}
-            />
-          )}
-          {scheduleId && <ViolationStat scheduleId={scheduleId} />}
-        </div>
-
-        {/* ── Schedule card ─────────────────────────────────────────────── */}
-        {schedulesLoading ? (
-          <CenteredSpinner />
-        ) : schedules.length === 0 ? (
-          <div
-            className="rounded-xl border border-dashed p-12 text-center"
-            style={{ borderColor: 'var(--border)' }}
-          >
-            <p className="text-[var(--text-3)] text-sm mb-4">
-              No schedules yet. Create one to get started.
-            </p>
-            <Button onClick={() => navigate('/schedules')}>Go to Schedules →</Button>
-          </div>
-        ) : (
+      {/*
+       * Schedule card: `width: max-content` shrink-wraps to the table's
+       * natural width (12 columns × 72px + label 52px ≈ 916px + borders).
+       * `margin: 0 auto` centers it. The card header uses justify-between
+       * inside that fixed width so the selector/button sit at the right edge
+       * of the table — no wider, no narrower.
+       */}
+      {schedulesLoading ? (
+        <CenteredSpinner />
+      ) : schedules.length === 0 ? (
         <div
-          className="rounded-xl border overflow-hidden"
-          style={{ borderColor: 'var(--border)', boxShadow: 'var(--card-shadow)' }}
+          className="rounded-xl border border-dashed p-12 text-center"
+          style={{ borderColor: 'var(--border)' }}
         >
+          <p className="text-[var(--text-3)] text-sm mb-4">
+            No schedules yet. Create one to get started.
+          </p>
+          <Button onClick={() => navigate('/schedules')}>Go to Schedules →</Button>
+        </div>
+      ) : (
+        /*
+         * Centering wrapper: shrink-wraps to the table's natural width
+         * (12 cols × 72px + 52px label ≈ 916px) and centers itself.
+         * The card inside fills this width exactly — no empty space.
+         */
+        <div style={{ width: 'max-content', margin: '0 auto' }}>
+          <div
+            className="rounded-xl border overflow-hidden"
+            style={{ borderColor: 'var(--border)', boxShadow: 'var(--card-shadow)' }}
+          >
           {/* Card header */}
           <div
             className="flex items-center justify-between px-4 py-3 border-b"
@@ -342,9 +351,9 @@ export function LandingPage() {
               </div>
             ))}
           </div>
+          </div>{/* end card */}
         </div>
-        )}
-      </div>{/* end centering wrapper */}
+      )}
     </AppShell>
   )
 }
