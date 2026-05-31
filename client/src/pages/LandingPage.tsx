@@ -132,41 +132,50 @@ export function LandingPage() {
 
   return (
     <AppShell title="Home">
-      {/* ── Stats grid — fills full width evenly ────────────────────── */}
-      <div
-        className="grid gap-3 mb-6"
-        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))' }}
-      >
-        <StatCard icon="🎓" value={classes.length} label="Classes" />
-        <StatCard icon="👩‍🏫" value={teachers.length} label="Teachers" />
-        <StatCard icon="📚" value={subjects.length} label="Subjects" />
-        <StatCard icon="🏫" value={rooms.length} label="Rooms" />
-        <StatCard icon="📋" value={lessons.length} label="Lessons" />
-        {placementPct !== null && (
-          <StatCard
-            icon="📅"
-            value={`${placementPct}%`}
-            label="Placed"
-            accent={placementPct === 100}
-          />
-        )}
-        {scheduleId && <ViolationStat scheduleId={scheduleId} />}
-      </div>
+      {/*
+       * Outer centering wrapper.
+       * `width: max-content` makes this div shrink-wrap to the widest child
+       * (the schedule table). `mx-auto` then centers it horizontally in the
+       * content area. Everything inside — stats AND table — will be exactly
+       * as wide as the table, perfectly aligned, with no leftover empty space.
+       *
+       * On very narrow screens the AppShell already has `overflow-y-auto`, so
+       * horizontal overflow scrolls the page rather than clipping content.
+       */}
+      <div style={{ width: 'max-content', margin: '0 auto' }}>
 
-      {/* ── Schedule card ───────────────────────────────────────────── */}
-      {schedulesLoading ? (
-        <CenteredSpinner />
-      ) : schedules.length === 0 ? (
-        <div
-          className="rounded-xl border border-dashed p-12 text-center"
-          style={{ borderColor: 'var(--border)' }}
-        >
-          <p className="text-[var(--text-3)] text-sm mb-4">
-            No schedules yet. Create one to get started.
-          </p>
-          <Button onClick={() => navigate('/schedules')}>Go to Schedules →</Button>
+        {/* ── Stats row — stretches to match the table width below ─────── */}
+        <div className="flex gap-3 mb-6">
+          <StatCard icon="🎓" value={classes.length} label="Classes" />
+          <StatCard icon="👩‍🏫" value={teachers.length} label="Teachers" />
+          <StatCard icon="📚" value={subjects.length} label="Subjects" />
+          <StatCard icon="🏫" value={rooms.length} label="Rooms" />
+          <StatCard icon="📋" value={lessons.length} label="Lessons" />
+          {placementPct !== null && (
+            <StatCard
+              icon="📅"
+              value={`${placementPct}%`}
+              label="Placed"
+              accent={placementPct === 100}
+            />
+          )}
+          {scheduleId && <ViolationStat scheduleId={scheduleId} />}
         </div>
-      ) : (
+
+        {/* ── Schedule card ─────────────────────────────────────────────── */}
+        {schedulesLoading ? (
+          <CenteredSpinner />
+        ) : schedules.length === 0 ? (
+          <div
+            className="rounded-xl border border-dashed p-12 text-center"
+            style={{ borderColor: 'var(--border)' }}
+          >
+            <p className="text-[var(--text-3)] text-sm mb-4">
+              No schedules yet. Create one to get started.
+            </p>
+            <Button onClick={() => navigate('/schedules')}>Go to Schedules →</Button>
+          </div>
+        ) : (
         <div
           className="rounded-xl border overflow-hidden"
           style={{ borderColor: 'var(--border)', boxShadow: 'var(--card-shadow)' }}
@@ -197,8 +206,8 @@ export function LandingPage() {
             </div>
           </div>
 
-          {/* Table — max height so it's a preview, not a full dump */}
-          <div className="overflow-auto" style={{ background: 'var(--surface)', maxHeight: 420 }}>
+          {/* Table — no height cap; the card shrink-wraps the content */}
+          <div style={{ background: 'var(--surface)' }}>
             {entriesLoading ? (
               <div className="p-8 flex justify-center"><CenteredSpinner /></div>
             ) : (
@@ -334,7 +343,8 @@ export function LandingPage() {
             ))}
           </div>
         </div>
-      )}
+        )}
+      </div>{/* end centering wrapper */}
     </AppShell>
   )
 }
