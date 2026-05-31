@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git push*)",
+            "shell": "bash",
+            "command": "bash .claude/pre-push-check.sh",
+            "timeout": 120,
+            "statusMessage": "Pre-push TypeScript check (mirrors Docker build)…"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$s = (Test-NetConnection -ComputerName localhost -Port 3001 -InformationLevel Quiet -WarningAction SilentlyContinue); $c = (Test-NetConnection -ComputerName localhost -Port 5173 -InformationLevel Quiet -WarningAction SilentlyContinue); if (-not $s -or -not $c) { & 'C:\\Users\\User\\Zmanim\\scripts\\start-dev.ps1' }",
+            "timeout": 120,
+            "statusMessage": "Checking dev servers…",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
