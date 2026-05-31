@@ -1,16 +1,19 @@
 # Zmanim — TODO & Feature Backlog
 
-> Last updated: 2026-05-30
+> Last updated: 2026-05-31
 > This file is the source of truth for all pending work. Update it at the end of every session.
 
 ---
 
 ## ✅ Recently Completed
 
-- **Quick-Fix Suggestions** — 💡 button on each violation in the panel. Server-side suggest-fix engine evaluates candidate moves in-memory and returns top-3 ranked by score improvement. 10 violation types supported (v1). Apply button calls moveEntry directly.
-- **Drag-Conflict Nudge Tooltip** — dark tooltip appears next to the cursor when hovering over a blocked cell during drag. Zero React re-renders — direct DOM manipulation via the existing pointermove handler. Shows the violation reason (e.g. "⛔ Teacher is already teaching at this slot").
-- **Undo / Redo** — Ctrl+Z/Ctrl+Y history stack in the schedule editor (place, move, remove). Group placements (MATH/ENGLISH) undo as one batch. Max 50 items. Buttons in topbar too.
-- **Teacher Availability Batch Editor** — 🗓 Availability button on each teacher card in Restrictions → Teachers. Visual day×slot grid, tiered cells (NON_NEGOTIABLE / IMPORTANT / FLEXIBLE). Saves as TEACHER_UNAVAILABLE_DAY_SLOT restrictions.
+- **Delete published schedule** — server guard removed; client shows stronger warning + error handling.
+- **Auto-scheduler all-placed guarantee** — 3-layer defence: count-based seed exclusion, per-restart check, Gate 3 finalization check. Job errors with user-friendly message if any lessons can't be placed.
+- **Production deployment** — Docker image (Dockerfile + docker-compose.prod.yml), Express serves static files in production, trust proxy for Caddy. Live at `https://zmanim.duckdns.org`.
+- **Quick-Fix Suggestions** — 💡 button on each violation. Server-side engine, top-3 ranked by score improvement, 10 violation types.
+- **Drag-Conflict Nudge Tooltip** — zero re-renders, direct DOM manipulation in pointermove handler.
+- **Undo / Redo** — Ctrl+Z/Ctrl+Y, max 50 items, group placements undo as one batch.
+- **Teacher Availability Batch Editor** — 🗓 Availability button, visual day×slot grid, tiered cells.
 - **Google OAuth** — credentials configured, profile picture shown in sidebar.
 
 ---
@@ -43,12 +46,12 @@ A dedicated view showing each teacher's assigned hours this week vs. their targe
 
 ## Production Blockers
 
-- [ ] **Google OAuth credentials** — set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `ALLOWED_EMAIL_DOMAIN=ankori.edu` in `server/.env`. The `dev-login` bypass must be disabled in production.
-- [ ] **Prisma migration history** — all schema changes so far used `db push` (dev shortcut). Before deploying: run `prisma migrate dev` locally to create proper migration files, then `prisma migrate deploy` on the server.
+- [ ] **Google OAuth credentials** — fill in `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ALLOWED_EMAIL_DOMAIN=ankori.edu` in `/opt/zmanim/server/.env` on the server. Add `https://zmanim.duckdns.org` as authorized origin and `https://zmanim.duckdns.org/auth/google/callback` as redirect URI in Google Cloud Console. Then `sudo docker compose -f docker-compose.prod.yml restart zmanim-server`.
+- [ ] **Prisma migration history** — all schema changes used `db push` (dev shortcut). Before any future schema change in production: run `prisma migrate dev` locally first, commit the migration files, then `prisma migrate deploy` on the server (not `db push`).
 
 ---
 
 ## Minor Cleanup
 
 - [ ] Remove dead `gradeMap` comment in `CompactViewPage`
-- [ ] Keyboard accessibility audit — tab order through grid, focus management in modals (was in Phase 8 checklist, not fully done)
+- [ ] Keyboard accessibility audit — tab order through grid, focus management in modals
