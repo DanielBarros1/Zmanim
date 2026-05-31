@@ -15,6 +15,7 @@
 import { Router } from 'express'
 import passport from 'passport'
 import { requireAuth } from '../middleware/auth'
+import { isRootEmail } from '../middleware/requireRoot'
 import { prisma } from '../db'
 
 export const authRouter = Router()
@@ -74,6 +75,9 @@ authRouter.get('/me', requireAuth, (req, res) => {
     picture: user.picture ?? null,
     role: user.role,
     teacherId: user.teacherId ?? null,
+    // Derived at request time from ALLOWED_EMAILS env — not stored in the DB.
+    // True means this user can manage the user list in the app.
+    isRoot: isRootEmail(user.email),
   })
 })
 

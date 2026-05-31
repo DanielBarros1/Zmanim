@@ -24,6 +24,32 @@ export interface AuthUser {
   picture: string | null
   role: Role
   teacherId: string | null
+  /** True when this user's email is in the ALLOWED_EMAILS env var.
+   *  Root users can invite/revoke other users via the User Management page. */
+  isRoot: boolean
+}
+
+/**
+ * One row on the User Management page.
+ * Root users (from ALLOWED_EMAILS env) have isRoot=true and no allowedEmailId.
+ * Invited users come from the AllowedEmail DB table.
+ * userId/name/picture are populated once the person has actually signed in.
+ */
+export interface UserListItem {
+  email: string
+  isRoot: boolean
+  /** AllowedEmail.id — null for root users (they're not in the DB table) */
+  allowedEmailId: string | null
+  /** Email of the root user who invited this person; null for root users */
+  invitedBy: string | null
+  /** ISO string of invite date; null for root users */
+  invitedAt: string | null
+  /** User.id — null if the person has never signed in */
+  userId: string | null
+  /** Display name from Google — null if not yet signed in */
+  name: string | null
+  /** Google profile picture URL — null if not yet signed in */
+  picture: string | null
 }
 
 // ─── School Config ───────────────────────────────────────────

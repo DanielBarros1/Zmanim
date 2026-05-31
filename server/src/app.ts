@@ -28,6 +28,7 @@ import { schedulesRouter } from './routes/schedules'
 import { entriesRouter } from './routes/entries'
 import { autoschedulerRouter } from './routes/autoscheduler'
 import { importRouter } from './routes/import'
+import { usersRouter } from './routes/users'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -84,6 +85,7 @@ app.use('/api/schedules', schedulesRouter)
 app.use('/api/schedules', entriesRouter)       // /api/schedules/:id/entries
 app.use('/api/schedules/auto', autoschedulerRouter)
 app.use('/api/import', importRouter)
+app.use('/api/users', usersRouter)
 
 // ─── Health check ─────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))

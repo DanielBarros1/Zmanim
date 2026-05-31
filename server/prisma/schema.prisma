@@ -259,6 +259,17 @@ model Override {
   createdAt       DateTime      @default(now())
 }
 
+/// Invited users — permitted to log in but have no management privileges.
+/// Root users are defined in the ALLOWED_EMAILS env var and are never stored here.
+/// On every login, passport checks: is this email in ALLOWED_EMAILS (root)
+/// OR in this table (invited)? If neither, access is denied.
+model AllowedEmail {
+  id        String   @id @default(uuid())
+  email     String   @unique  // always stored lowercase
+  invitedBy String            // email of the root user who sent the invite
+  createdAt DateTime @default(now())
+}
+
 model Restriction {
   id        String          @id @default(uuid())
   type      RestrictionType

@@ -166,6 +166,19 @@ Google strategy when `GOOGLE_CLIENT_ID` is set (guards with `if (clientId && cli
 When it's empty the app starts without crashing. The dev-login route
 (`GET /auth/dev-login`) creates an ADMIN user and is only registered outside production.
 
+### User access control — two tiers
+1. **Root users** — email in `ALLOWED_EMAILS` env var (comma-separated). Always allowed
+   in. Can invite/revoke other users via `/users` page. `isRoot: true` on `AuthUser`.
+2. **Invited users** — email in `AllowedEmail` DB table. Added by root users via the app.
+   Can log in but cannot manage other users. `isRoot: false`.
+
+If `ALLOWED_EMAILS` is set but the login email is in neither tier, access is denied.
+If `ALLOWED_EMAILS` is empty, any Google account can log in (no restriction).
+
+**`requireRoot` middleware** is in `server/src/middleware/requireRoot.ts`.
+**`isRootEmail(email)`** helper is exported from same file — used in `/auth/me` to populate `isRoot`.
+Sidebar shows the "Admin" section (with `/users` link) only when `user.isRoot === true`.
+
 ### Evaluation cache
 `useEvaluation(scheduleId)` hits `GET /api/schedules/:id/evaluate`. ALL
 placement mutation hooks call `queryClient.invalidateQueries(['schedules', scheduleId, 'evaluate'])`
@@ -244,6 +257,7 @@ Mutation routes require `ADMIN` role (enforced by `requireAdmin` middleware).
 | `/api/schedules/:id/suggest-fix` | routes/schedules.ts | Top-3 fix suggestions per violation |
 | `/api/schedules/auto` | routes/autoscheduler.ts | POST (run AS), GET status, DELETE (cancel) |
 | `/api/import` | routes/import.ts | POST XLSX, returns parsed lesson rows |
+| `/api/users` | routes/users.ts | GET list, POST invite, DELETE revoke — root only |
 
 ---
 
@@ -378,9 +392,19 @@ sudo docker compose -f docker-compose.prod.yml exec zmanim-server npx prisma db 
 ```
 
 ### Schema changes in production
-Currently using `db push` (shortcut — no migration history).
-Before the next schema change: run `prisma migrate dev` locally first, commit
-the migration file, then use `prisma migrate deploy` on the server.
+Migration history is now active (established in session 9).
+The `_prisma_migrations` table exists in the DB; the initial schema is registered
+as baseline and `20260531120000_add_allowed_email` was the first real migration.
+
+**Workflow for future schema changes:**
+1. Update `schema.prisma`
+2. Create migration SQL in `server/prisma/migrations/YYYYMMDDHHMMSS_name/migration.sql`
+3. Run `npx prisma migrate deploy` locally to apply + register it
+4. Commit the migration file
+5. On production: `docker compose exec zmanim-server npx prisma migrate deploy`
+
+Note: `prisma migrate dev` can't run in Claude Code's non-interactive terminal.
+Create migration SQL manually and use `migrate deploy` directly (which is non-interactive).
 
 ---
 

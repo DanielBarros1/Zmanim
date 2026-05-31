@@ -16,6 +16,7 @@
  *     /views/teacher           — TeacherViewPage
  *     /views/grade             — GradeViewPage
  *     /views/compact           — CompactViewPage
+ *     /users                   — UsersPage (root only)
  *
  * AuthGuard shows a spinner while checking session and redirects
  * unauthenticated users to /login.
@@ -38,6 +39,7 @@ import { TeacherViewPage } from './pages/views/TeacherViewPage'
 import { GradeViewPage } from './pages/views/GradeViewPage'
 import { CompactViewPage } from './pages/views/CompactViewPage'
 import { ImportPage } from './pages/ImportPage'
+import { UsersPage } from './pages/UsersPage'
 
 export default function App() {
   return (
@@ -72,6 +74,9 @@ export default function App() {
 
                 {/* Import */}
                 <Route path="/import" element={<ImportPage />} />
+
+                {/* User management (root only) */}
+                <Route path="/users" element={<UsersPage />} />
 
                 {/* Fallback */}
                 <Route path="*" element={<Navigate to="/" replace />} />

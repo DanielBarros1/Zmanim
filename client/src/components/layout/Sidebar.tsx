@@ -39,6 +39,11 @@ const SCHEDULE_NAV: NavItem[] = [
   { to: '/schedules', label: 'All Schedules', icon: '🗓️' },
 ]
 
+/** Shown only to root users (email in ALLOWED_EMAILS env). */
+const ADMIN_NAV: NavItem[] = [
+  { to: '/users', label: 'Users', icon: '👥' },
+]
+
 const VIEWS_NAV: NavItem[] = [
   { to: '/views/teacher',  label: 'Teacher View',  icon: '👤' },
   { to: '/views/grade',    label: 'Grade View',    icon: '🎓' },
@@ -149,6 +154,10 @@ export function Sidebar() {
         <NavSection label="Schedules" items={SCHEDULE_NAV} collapsed={sidebarCollapsed} />
         <NavSection label="Views" items={VIEWS_NAV} collapsed={sidebarCollapsed} />
         <NavSection label="Definitions" items={DEFINITIONS_NAV} collapsed={sidebarCollapsed} />
+        {/* Admin section — only rendered for root users */}
+        {user?.isRoot && (
+          <NavSection label="Admin" items={ADMIN_NAV} collapsed={sidebarCollapsed} />
+        )}
       </nav>
 
       {/* Collapse toggle */}

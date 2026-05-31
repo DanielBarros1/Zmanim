@@ -43,17 +43,30 @@ export function configurePassport() {
             return done(null, false, { message: 'No email returned from Google' })
           }
 
-          // ── Email allowlist ────────────────────────────────────────────
-          // ALLOWED_EMAILS is a comma-separated list of permitted addresses.
-          // If the env var is set and non-empty, only those exact emails can
-          // log in. Unknown accounts are rejected before touching the DB.
-          const allowedEmails = (process.env.ALLOWED_EMAILS ?? '')
+          // ── Access control ─────────────────────────────────────────────
+          // Two-tier check: root users (env) and invited users (AllowedEmail table).
+          //
+          //   Tier 1 — ALLOWED_EMAILS env var: comma-separated list of root accounts.
+          //     These users can also manage the user list in the app.
+          //
+          //   Tier 2 — AllowedEmail DB table: accounts invited by a root user.
+          //     They can log in but cannot manage other users.
+          //
+          // If ALLOWED_EMAILS is set (non-empty) and the email is in neither tier,
+          // access is denied. If ALLOWED_EMAILS is empty, any Google account can log in.
+          const rootEmails = (process.env.ALLOWED_EMAILS ?? '')
             .split(',')
             .map(e => e.trim().toLowerCase())
             .filter(Boolean)
 
-          if (allowedEmails.length > 0 && !allowedEmails.includes(email.toLowerCase())) {
-            return done(null, false, { message: 'Your account is not authorised to access this app.' })
+          if (rootEmails.length > 0 && !rootEmails.includes(email.toLowerCase())) {
+            // Not a root user — check the AllowedEmail invite table
+            const dbAllowed = await prisma.allowedEmail.findUnique({
+              where: { email: email.toLowerCase() },
+            })
+            if (!dbAllowed) {
+              return done(null, false, { message: 'Your account is not authorised to access this app.' })
+            }
           }
 
           // ── Legacy domain restriction ──────────────────────────────────

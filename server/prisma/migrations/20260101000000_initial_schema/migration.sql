@@ -1,0 +1,3 @@
+-- Baseline migration — schema was applied via `prisma db push` before
+-- migration history was introduced. Marking as applied without running.
+-- All tables defined in schema.prisma as of 2026-01-01 already exist.
