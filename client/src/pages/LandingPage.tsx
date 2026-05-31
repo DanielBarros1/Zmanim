@@ -339,10 +339,22 @@ export function LandingPage() {
             )}
           </div>
 
-          {/* Legend */}
+          {/*
+           * Legend — width:0 + min-width:100% is the key trick here.
+           * In a `width:max-content` parent, percentage widths contribute 0
+           * to the max-content calculation, so this element doesn't drive the
+           * card any wider than the table. Once the card width is resolved
+           * (to the table's ~916px), min-width:100% fills that width and
+           * flex-wrap does its job normally.
+           */}
           <div
             className="px-4 py-3 border-t flex flex-wrap gap-3"
-            style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
+            style={{
+              borderColor: 'var(--border)',
+              background: 'var(--surface-2)',
+              width: 0,
+              minWidth: '100%',
+            }}
           >
             {subjects.map(s => (
               <div key={s.id} className="flex items-center gap-1.5">
