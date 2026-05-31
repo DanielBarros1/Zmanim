@@ -245,6 +245,7 @@ const TIER_DOT: Record<RestrictionTier, string> = {
 }
 
 const TIER_BADGE: Record<RestrictionTier, 'warn' | 'accent' | 'neutral' | 'ok'> = {
+  [RestrictionTier.INVARIANT]:      'warn',
   [RestrictionTier.NON_NEGOTIABLE]: 'warn',
   [RestrictionTier.IMPORTANT]: 'accent',
   [RestrictionTier.PREFERRED]: 'ok',

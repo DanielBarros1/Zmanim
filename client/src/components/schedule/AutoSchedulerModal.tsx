@@ -16,7 +16,7 @@ import { useNavigate } from 'react-router-dom'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
-import { useStartAutoScheduler, fetchJobStatus, useDeleteSchedule } from '../../api/schedules'
+import { useStartAutoScheduler, fetchJobStatus } from '../../api/schedules'
 import type { CandidateResult } from '../../api/schedules'
 import { useSchedules } from '../../api/schedules'
 import { useUIStore } from '../../store/uiStore'
@@ -152,7 +152,6 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
   const navigate = useNavigate()
   const { setReviewMode } = useUIStore()
   const startAS = useStartAutoScheduler()
-  const deleteSchedule = useDeleteSchedule()
   const { data: schedules = [] } = useSchedules()
 
   // ── Config state ────────────────────────────────────────────────

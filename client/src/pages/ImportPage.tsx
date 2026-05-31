@@ -32,6 +32,8 @@ const TYPE_LABEL: Record<LessonType, string> = {
   [LessonType.SHARED]:        'Shared',
   [LessonType.MATH_GROUP]:    'Math Group',
   [LessonType.ENGLISH_GROUP]: 'English Group',
+  [LessonType.PARALLEL]:      'Parallel',
+  [LessonType.MULTI_TEACHER]: 'Multi-Teacher',
 }
 
 const TYPE_COLOR: Record<LessonType, string> = {
@@ -39,6 +41,8 @@ const TYPE_COLOR: Record<LessonType, string> = {
   [LessonType.SHARED]:        'var(--accent)',
   [LessonType.MATH_GROUP]:    '#6D28D9',
   [LessonType.ENGLISH_GROUP]: '#0369A1',
+  [LessonType.PARALLEL]:      '#0891b2',
+  [LessonType.MULTI_TEACHER]: '#7c3aed',
 }
 
 export function ImportPage() {

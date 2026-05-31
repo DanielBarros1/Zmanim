@@ -21,6 +21,7 @@ export interface AuthUser {
   id: string
   email: string
   name: string
+  picture: string | null
   role: Role
   teacherId: string | null
 }

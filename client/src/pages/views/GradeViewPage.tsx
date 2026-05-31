@@ -144,7 +144,7 @@ function GradeGrid({ gradeId, scheduleId }: GradeGridProps) {
                       const entry = cellMap[cls.id]?.[day]?.[slot]
                       const lesson = entry ? lessonMap[entry.lessonId] : undefined
                       const subject = lesson ? subjectMap[lesson.subjectId] : undefined
-                      const teacher = lesson ? teacherMap[lesson.teacherId] : undefined
+                      const teacher = lesson?.teacherId ? teacherMap[lesson.teacherId] : undefined
 
                       return (
                         <td
