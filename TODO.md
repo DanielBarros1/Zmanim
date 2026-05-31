@@ -9,7 +9,7 @@
 
 - **Delete published schedule** — server guard removed; client shows stronger warning + error handling.
 - **Auto-scheduler all-placed guarantee** — 3-layer defence: count-based seed exclusion, per-restart check, Gate 3 finalization check. Job errors with user-friendly message if any lessons can't be placed.
-- **Production deployment** — Docker image (Dockerfile + docker-compose.prod.yml), Express serves static files in production, trust proxy for Caddy. Live at `https://zmanim.duckdns.org`.
+- **Production deployment** — Docker image (`node:20-slim` + `debian-openssl-3.0.x` Prisma target), Express serves static files in production, trust proxy for Caddy. Domain: `https://zmanim.duckdns.org`. Cert auto-provisioned by Caddy via Let's Encrypt. See `docs/deployment.md` for full runbook including Docker gotchas.
 - **Quick-Fix Suggestions** — 💡 button on each violation. Server-side engine, top-3 ranked by score improvement, 10 violation types.
 - **Drag-Conflict Nudge Tooltip** — zero re-renders, direct DOM manipulation in pointermove handler.
 - **Undo / Redo** — Ctrl+Z/Ctrl+Y, max 50 items, group placements undo as one batch.
