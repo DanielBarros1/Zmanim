@@ -159,7 +159,7 @@ export function CompactViewPage() {
                     >
                       {isFirstSlot ? DAY_SHORT[day] : `S${slot}`}
                     </td>
-                    {gradeClasses.flatMap(({ classes: gc }, gradeIdx) =>
+                    {gradeClasses.flatMap(({ classes: gc }) =>
                       gc.map((cls, clsIdx) => {
                         const cell = cellMap[cls.id]?.[day]?.[slot]
                         return (
