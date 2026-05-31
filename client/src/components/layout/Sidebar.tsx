@@ -175,13 +175,23 @@ export function Sidebar() {
             className="flex items-center gap-2"
             style={{ justifyContent: sidebarCollapsed ? 'center' : undefined }}
           >
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
-              style={{ background: 'var(--accent)' }}
-              title={sidebarCollapsed ? user.name : undefined}
-            >
-              {user.name.charAt(0).toUpperCase()}
-            </div>
+            {user.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="w-7 h-7 rounded-full shrink-0 object-cover"
+                title={sidebarCollapsed ? user.name : undefined}
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
+                style={{ background: 'var(--accent)' }}
+                title={sidebarCollapsed ? user.name : undefined}
+              >
+                {user.name.charAt(0).toUpperCase()}
+              </div>
+            )}
             {!sidebarCollapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-[12px] font-medium text-[var(--text-1)] truncate">

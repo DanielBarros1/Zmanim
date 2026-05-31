@@ -71,6 +71,7 @@ authRouter.get('/me', requireAuth, (req, res) => {
     id: user.id,
     email: user.email,
     name: user.name,
+    picture: user.picture ?? null,
     role: user.role,
     teacherId: user.teacherId ?? null,
   })

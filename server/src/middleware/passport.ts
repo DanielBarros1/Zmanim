@@ -43,14 +43,17 @@ export function configurePassport() {
             })
           }
 
-          // Upsert user — create on first login, update name if it changed
+          const picture = profile.photos?.[0]?.value ?? null
+
+          // Upsert user — create on first login, update name/picture if changed
           const user = await prisma.user.upsert({
             where: { googleId: profile.id },
-            update: { name: profile.displayName, email },
+            update: { name: profile.displayName, email, picture },
             create: {
               googleId: profile.id,
               email,
               name: profile.displayName,
+              picture,
               role: 'ADMIN',
             },
           })
