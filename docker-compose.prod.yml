@@ -1,0 +1,16 @@
+services:
+  zmanim-server:
+    build: .
+    container_name: zmanim-server-1
+    restart: unless-stopped
+    env_file: ./server/.env
+    expose:
+      - "3001"
+    networks:
+      - finanse_default   # joins the existing finance stack network so:
+                          #   • Caddy (finanse-caddy-1) can reverse-proxy to us
+                          #   • We can reach finanse-postgres-1 by container name
+
+networks:
+  finanse_default:
+    external: true        # network already exists — don't recreate it

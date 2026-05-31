@@ -9,6 +9,7 @@
 
 import 'dotenv/config'
 import express from 'express'
+import path from 'path'
 import session from 'express-session'
 import connectPgSimple from 'connect-pg-simple'
 import passport from 'passport'
@@ -30,6 +31,11 @@ import { importRouter } from './routes/import'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
+
+// Trust Caddy / any reverse proxy sitting in front of us.
+// Required so session cookies with secure:true work correctly — without this,
+// Express thinks the connection is plain HTTP and refuses to set Secure cookies.
+app.set('trust proxy', 1)
 
 // ─── CORS ─────────────────────────────────────────────────────
 app.use(cors({
@@ -81,6 +87,19 @@ app.use('/api/import', importRouter)
 
 // ─── Health check ─────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))
+
+// ─── Static files (production only) ───────────────────────────
+// In production the built React app lives at client/dist relative to the
+// repo root.  Express serves it here so Caddy only needs to reverse-proxy
+// to this one process — no separate static-file volume mount required.
+// Must be AFTER all API/auth routes so the SPA catch-all doesn't shadow them.
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(__dirname, '../../client/dist')
+  app.use(express.static(distPath))
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+}
 
 app.listen(PORT, () => {
   console.log(`Zmanim server running on http://localhost:${PORT}`)
