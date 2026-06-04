@@ -8,7 +8,9 @@
 import { useMutation } from '@tanstack/react-query'
 import type { LessonType, MathLevel } from '@zmanim/shared'
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
+// Use relative URL so it works in both dev (Vite proxy) and production
+// (Express serves the API on the same origin as the SPA).
+const API = ''
 
 // ─── Response shapes (mirror server types) ───────────────────
 
