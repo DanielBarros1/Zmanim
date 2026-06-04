@@ -1141,6 +1141,7 @@ function assignRooms(entries: any[], lessons: any[], rooms: any[]): any[] {
       const e = result[idx]
       if (e.roomId) continue  // already set (seeded)
       const lesson = lessonMap.get(e.lessonId)
+      if (lesson?.subject?.noRoomRequired) continue  // no room wanted
       const specialId = lesson?.subject?.specializedRoomId
       if (specialId && !usedRoomIds.has(specialId)) {
         result[idx].roomId = specialId
@@ -1148,10 +1149,13 @@ function assignRooms(entries: any[], lessons: any[], rooms: any[]): any[] {
       }
     }
 
-    // Pass 3: assign any remaining free room to entries still without one
+    // Pass 3: assign any remaining free room to entries still without one.
+    // Skip subjects that explicitly don't need a room (e.g. PE outdoors).
     for (const idx of indices) {
       const e = result[idx]
       if (e.roomId) continue
+      const lesson = lessonMap.get(e.lessonId)
+      if (lesson?.subject?.noRoomRequired) continue  // intentionally roomless
       const freeRoom = rooms.find((r: any) => !usedRoomIds.has(r.id))
       if (freeRoom) {
         result[idx].roomId = freeRoom.id

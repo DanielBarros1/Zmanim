@@ -40,10 +40,11 @@ interface FormState {
   name: string
   isArts: boolean
   color: string
+  noRoomRequired: boolean
   specializedRoomId: string
 }
 
-const EMPTY_FORM: FormState = { name: '', isArts: false, color: '#4F46E5', specializedRoomId: '' }
+const EMPTY_FORM: FormState = { name: '', isArts: false, color: '#4F46E5', noRoomRequired: false, specializedRoomId: '' }
 
 function SubjectForm({
   initial,
@@ -113,10 +114,22 @@ function SubjectForm({
         onChange={e => setForm(p => ({ ...p, isArts: e.target.checked }))}
       />
 
+      <Checkbox
+        label="No room required (e.g. PE, outdoor activities)"
+        checked={form.noRoomRequired}
+        onChange={e => setForm(p => ({
+          ...p,
+          noRoomRequired: e.target.checked,
+          // Clear specialized room — the two options are mutually exclusive
+          specializedRoomId: e.target.checked ? '' : p.specializedRoomId,
+        }))}
+      />
+
       <Select
         label="Specialized room (optional)"
         value={form.specializedRoomId}
         onChange={e => setForm(p => ({ ...p, specializedRoomId: e.target.value }))}
+        disabled={form.noRoomRequired}
       >
         <option value="">None</option>
         {rooms.map(r => (
@@ -167,7 +180,8 @@ export function SubjectsPage() {
         name: form.name.trim(),
         isArts: form.isArts,
         color: form.color,
-        specializedRoomId: form.specializedRoomId || null,
+        noRoomRequired: form.noRoomRequired,
+        specializedRoomId: form.noRoomRequired ? null : (form.specializedRoomId || null),
       })
       setModalOpen(false)
     } catch (err: any) {
@@ -185,7 +199,8 @@ export function SubjectsPage() {
           name: form.name.trim(),
           isArts: form.isArts,
           color: form.color,
-          specializedRoomId: form.specializedRoomId || null,
+          noRoomRequired: form.noRoomRequired,
+          specializedRoomId: form.noRoomRequired ? null : (form.specializedRoomId || null),
         },
       })
       setEditingSubject(null)
@@ -254,7 +269,8 @@ export function SubjectsPage() {
                   <div className="w-1 h-8 rounded-full shrink-0" style={{ background: subject.color }} />
                   <span className="flex-1 text-[14px] font-medium text-[var(--text-1)] hebrew">{subject.name}</span>
                   {subject.isArts && <Badge variant="accent">Arts</Badge>}
-                  {subject.specializedRoomId && <Badge variant="neutral">Specialized Room</Badge>}
+                  {subject.noRoomRequired && <Badge variant="neutral">No room</Badge>}
+                  {subject.specializedRoomId && !subject.noRoomRequired && <Badge variant="neutral">Specialized Room</Badge>}
                   <div className="flex gap-1 ml-auto">
                     <Button variant="ghost" size="sm" onClick={() => openEdit(subject)}>Edit</Button>
                     <Button variant="ghost" size="sm" onClick={() => setDeletingSubject(subject)} className="text-red-500 hover:text-red-600">Delete</Button>
@@ -293,6 +309,7 @@ export function SubjectsPage() {
               name: editingSubject.name,
               isArts: editingSubject.isArts,
               color: editingSubject.color,
+              noRoomRequired: editingSubject.noRoomRequired,
               specializedRoomId: editingSubject.specializedRoomId ?? '',
             }}
             onSave={handleUpdate}

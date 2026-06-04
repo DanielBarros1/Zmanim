@@ -126,7 +126,11 @@ model Subject {
   name              String   // Hebrew
   isArts            Boolean  @default(false)
   color             String   // hex from design palette
-  // If set, lessons of this subject MUST be placed in this room (D6 invariant)
+  // If true, lessons of this subject don't need a room (e.g. PE held outdoors).
+  // The auto-scheduler will leave roomId = null and no violation is raised.
+  noRoomRequired    Boolean  @default(false)
+  // If set, lessons of this subject MUST be placed in this room (D6 invariant).
+  // Cannot be combined with noRoomRequired.
   specializedRoomId String?
   specializedRoom   Room?    @relation("SpecializedSubjects", fields: [specializedRoomId], references: [id])
   lessons           Lesson[]

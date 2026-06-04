@@ -25,6 +25,7 @@ const subjectSchema = z.object({
   name: z.string().min(1),
   isArts: z.boolean().default(false),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  noRoomRequired: z.boolean().default(false),
   specializedRoomId: z.string().uuid().nullable().optional(),
 })
 

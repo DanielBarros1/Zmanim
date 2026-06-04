@@ -78,6 +78,9 @@ export interface Subject {
   name: string           // Hebrew
   isArts: boolean
   color: string          // hex from design palette
+  /** When true, lessons of this subject don't require a room (e.g. PE).
+   *  The auto-scheduler leaves roomId = null; no violation is raised. */
+  noRoomRequired: boolean
   specializedRoomId: string | null
 }
 
