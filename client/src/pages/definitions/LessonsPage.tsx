@@ -614,6 +614,9 @@ export function LessonsPage() {
   const sortedTeachers  = useMemo(() => [...teachers].sort((a, b) => a.name.localeCompare(b.name)), [teachers])
 
   // ── Filtered + sorted lessons ──
+  // totalHours sums hoursPerWeek across all currently visible lessons.
+  // When a grade/subject/teacher filter is active this gives the h/wk total
+  // for that slice — the primary use case is "how many hours planned for grade X?".
   const filteredLessons = useMemo(() => {
     let result = [...lessons]
 
@@ -695,6 +698,11 @@ export function LessonsPage() {
     lessons, typeFilter, gradeFilter, subjectFilter, teacherFilter, search,
     sortBy, sortDir, subjectsById, teachersById, classesById, gradesById,
   ])
+
+  const totalHours = useMemo(
+    () => filteredLessons.reduce((sum, l) => sum + l.hoursPerWeek, 0),
+    [filteredLessons],
+  )
 
   // Clear selection when filter changes
   useEffect(() => {
@@ -1004,7 +1012,7 @@ export function LessonsPage() {
         </div>
       </div>
 
-      {/* ── Selection header row ── */}
+      {/* ── Selection / summary header row ── */}
       {filteredLessons.length > 0 && (
         <div
           className="flex items-center gap-2 px-3 py-1.5 mb-1.5 rounded-md text-[12px] text-[var(--text-3)]"
@@ -1017,14 +1025,40 @@ export function LessonsPage() {
             onChange={toggleSelectAll}
             title="Select / deselect all visible lessons"
           />
+
+          {/* Lesson count */}
           <span>
             {selectedIds.size > 0
               ? `${selectedIds.size} selected`
               : `${filteredLessons.length} lesson${filteredLessons.length !== 1 ? 's' : ''}`}
             {filteredLessons.length !== lessons.length && (
-              <span className="text-[var(--text-4)]"> (filtered from {lessons.length})</span>
+              <span className="ml-0.5 opacity-60">(of {lessons.length})</span>
             )}
           </span>
+
+          {/* Hours total — the main summary stat */}
+          <span className="text-[var(--text-3)]">·</span>
+          <span
+            className="font-semibold tabular-nums"
+            style={{ color: 'var(--text-1)' }}
+            title={`Total hours per week for the ${hasActiveFilters ? 'filtered' : 'full'} lesson set`}
+          >
+            {totalHours} h/wk
+          </span>
+
+          {/* Label clarifies what the total covers when a filter is active */}
+          {hasActiveFilters && (
+            <span className="text-[10px] opacity-60">
+              {gradeFilter
+                ? `— Grade ${sortedGrades.find(g => g.id === gradeFilter)?.number ?? '?'}`
+                : subjectFilter
+                ? `— ${subjects.find(s => s.id === subjectFilter)?.name ?? '?'}`
+                : teacherFilter
+                ? `— ${teachers.find(t => t.id === teacherFilter)?.name ?? '?'}`
+                : '— filtered'}
+            </span>
+          )}
+
           {selectedIds.size > 0 && (
             <button
               onClick={() => setSelectedIds(new Set())}
