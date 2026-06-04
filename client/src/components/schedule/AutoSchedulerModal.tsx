@@ -11,7 +11,7 @@
  * clutter the schedule list.
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
@@ -20,7 +20,11 @@ import { useStartAutoScheduler, fetchJobStatus } from '../../api/schedules'
 import type { CandidateResult } from '../../api/schedules'
 import { useSchedules } from '../../api/schedules'
 import { useUIStore } from '../../store/uiStore'
+import { useLessons } from '../../api/lessons'
+import { useClasses, useGrades } from '../../api/grades'
+import { useConfig } from '../../api/config'
 import apiClient from '../../api/client'
+import type { Grade, Class } from '@zmanim/shared'
 
 interface AutoSchedulerModalProps {
   open: boolean
@@ -146,6 +150,181 @@ function CandidateCard({
   )
 }
 
+// ─── Pre-flight capacity check ────────────────────────────────
+//
+// Computes assigned h/wk per class and compares to available slots.
+// Runs entirely client-side from cached data — instant, no network call.
+//
+// "Assigned h/wk for class C" = sum of hoursPerWeek for every lesson
+// that involves C either via classIds or (for group lessons) via gradeId.
+//
+// A class with assigned > available is provably infeasible — the AS will
+// always fail regardless of restarts.  We show this before running so the
+// user knows to fix their lesson plan rather than waste time watching it fail.
+
+interface ClassCapacity {
+  classId: string
+  label: string    // "9A", "12B", etc.
+  gradeNumber: number
+  assigned: number
+  available: number
+  pct: number      // assigned / available, may exceed 1.0
+}
+
+function useCapacityCheck(grades: Grade[], classes: Class[]) {
+  const { data: lessons = [] } = useLessons()
+  const { data: config } = useConfig()
+
+  return useMemo<ClassCapacity[]>(() => {
+    if (!config || classes.length === 0) return []
+
+    const available = config.slotsPerDay * config.workDays.length
+
+    // Map gradeId → class IDs for group-lesson expansion
+    const classesByGrade: Record<string, string[]> = {}
+    for (const cls of classes) {
+      if (!classesByGrade[cls.gradeId]) classesByGrade[cls.gradeId] = []
+      classesByGrade[cls.gradeId].push(cls.id)
+    }
+
+    const hoursPerClass: Record<string, number> = {}
+
+    for (const lesson of lessons) {
+      // Determine which class IDs this lesson contributes to
+      let affectedClassIds = [...lesson.classIds]
+      // MATH_GROUP / ENGLISH_GROUP use gradeId instead of classIds
+      if (affectedClassIds.length === 0 && lesson.gradeId) {
+        affectedClassIds = classesByGrade[lesson.gradeId] ?? []
+      }
+      for (const cid of affectedClassIds) {
+        hoursPerClass[cid] = (hoursPerClass[cid] ?? 0) + lesson.hoursPerWeek
+      }
+    }
+
+    const gradeById = Object.fromEntries(grades.map(g => [g.id, g]))
+
+    return classes
+      .map(cls => {
+        const grade = gradeById[cls.gradeId]
+        const assigned = hoursPerClass[cls.id] ?? 0
+        return {
+          classId: cls.id,
+          label: grade ? `${grade.number}${cls.section}` : cls.section,
+          gradeNumber: grade?.number ?? 0,
+          assigned,
+          available,
+          pct: available > 0 ? assigned / available : 0,
+        }
+      })
+      .sort((a, b) => a.gradeNumber - b.gradeNumber || a.label.localeCompare(b.label))
+  }, [lessons, classes, grades, config])
+}
+
+function FeasibilityPanel({ grades, classes }: { grades: Grade[]; classes: Class[] }) {
+  const capacity = useCapacityCheck(grades, classes)
+  const [expanded, setExpanded] = useState(false)
+
+  if (capacity.length === 0) return null
+
+  const overloaded  = capacity.filter(c => c.assigned > c.available)
+  const tight       = capacity.filter(c => c.assigned === c.available)
+  const hasProblems = overloaded.length > 0
+
+  // Collapsed summary chip
+  if (!expanded) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors hover:border-[var(--accent)]"
+        style={{
+          background:   hasProblems ? '#FEF2F2' : 'var(--surface-2)',
+          borderColor:  hasProblems ? '#FECACA' : 'var(--border)',
+        }}
+      >
+        <span className="text-[12px] font-medium" style={{ color: hasProblems ? '#DC2626' : 'var(--text-2)' }}>
+          {hasProblems
+            ? `⛔ ${overloaded.length} class${overloaded.length > 1 ? 'es' : ''} over capacity — click to see details`
+            : tight.length > 0
+            ? `⚠️ ${tight.length} class${tight.length > 1 ? 'es' : ''} at exactly full capacity`
+            : `✓ Capacity check passed (${capacity.length} classes)`}
+        </span>
+        <span className="text-[11px] text-[var(--text-3)]">▼</span>
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="rounded-lg border overflow-hidden"
+      style={{ borderColor: hasProblems ? '#FECACA' : 'var(--border)' }}
+    >
+      {/* Header */}
+      <button
+        onClick={() => setExpanded(false)}
+        className="w-full flex items-center justify-between px-3 py-2 text-left"
+        style={{ background: hasProblems ? '#FEF2F2' : 'var(--surface-2)' }}
+      >
+        <span className="text-[12px] font-semibold" style={{ color: hasProblems ? '#DC2626' : 'var(--text-1)' }}>
+          Class capacity — {capacity[0]?.available ?? 0} slots/week available
+        </span>
+        <span className="text-[11px] text-[var(--text-3)]">▲</span>
+      </button>
+
+      {/* Class rows */}
+      <div
+        className="divide-y px-3 py-2 max-h-56 overflow-y-auto"
+        style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+      >
+        {capacity.map(c => {
+          const isOver  = c.assigned > c.available
+          const isFull  = c.assigned === c.available
+          const barPct  = Math.min(c.pct * 100, 100)
+          const barColor = isOver ? '#EF4444' : isFull ? '#F59E0B' : '#22C55E'
+
+          return (
+            <div key={c.classId} className="flex items-center gap-3 py-1.5">
+              {/* Class label */}
+              <span
+                className="w-7 text-[11px] font-bold tabular-nums shrink-0 text-right"
+                style={{ color: isOver ? '#DC2626' : 'var(--text-2)' }}
+              >
+                {c.label}
+              </span>
+
+              {/* Progress bar */}
+              <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${barPct}%`, background: barColor }}
+                />
+              </div>
+
+              {/* Numbers */}
+              <span
+                className="text-[11px] tabular-nums shrink-0 w-24 text-right"
+                style={{ color: isOver ? '#DC2626' : isFull ? '#D97706' : 'var(--text-3)' }}
+              >
+                {isOver
+                  ? `${c.assigned}/${c.available} ⛔ +${c.assigned - c.available}`
+                  : isFull
+                  ? `${c.assigned}/${c.available} ⚠️ full`
+                  : `${c.assigned}/${c.available}`}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Footer hint */}
+      {hasProblems && (
+        <div className="px-3 py-2 text-[11px]" style={{ background: '#FEF2F2', color: '#DC2626' }}>
+          Remove or reduce hours for the red classes in the Lessons page before running.
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main modal ────────────────────────────────────────────────
 
 export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
@@ -153,6 +332,12 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
   const { setReviewMode } = useUIStore()
   const startAS = useStartAutoScheduler()
   const { data: schedules = [] } = useSchedules()
+  const { data: grades = [] }   = useGrades()
+  const { data: classes = [] }  = useClasses()
+
+  // ── Capacity check (derived from grades/classes, used by FeasibilityPanel) ──
+  const capacity = useCapacityCheck(grades, classes)
+  const isInfeasible = capacity.some(c => c.assigned > c.available)
 
   // ── Config state ────────────────────────────────────────────────
   const [name, setName] = useState(() => {
@@ -348,10 +533,18 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
             </div>
           </div>
 
-          <div className="flex justify-end gap-2">
+          {/* Capacity check — shows over-allocated classes before wasting restarts */}
+          <FeasibilityPanel grades={grades} classes={classes} />
+
+          <div className="flex items-center justify-end gap-2">
             <Button variant="secondary" onClick={handleClose}>Cancel</Button>
-            <Button onClick={handleStart} loading={startAS.isPending} disabled={!name.trim()}>
-              🚀 Run Auto-Scheduler
+            <Button
+              onClick={handleStart}
+              loading={startAS.isPending}
+              disabled={!name.trim()}
+              title={isInfeasible ? 'One or more classes are over capacity — the run will likely fail' : undefined}
+            >
+              {isInfeasible ? '⚠️ Run Anyway' : '🚀 Run Auto-Scheduler'}
             </Button>
           </div>
         </div>
@@ -448,14 +641,72 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
       {/* ── Error ── */}
       {uiState === 'error' && (
         <div className="space-y-4">
-          <div className="text-center py-4">
+          <div className="text-center pt-2">
             <p className="text-4xl">❌</p>
-            <p className="text-[14px] font-semibold text-red-600 mt-2">Auto-scheduler failed</p>
-            <p className="text-[12px] mt-1 px-2" style={{ color: 'var(--text-2)' }}>{errorMsg}</p>
+            <p className="text-[15px] font-semibold text-red-600 mt-2">Auto-scheduler failed</p>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setUiState('config')}>Try again</Button>
-            <Button variant="ghost" onClick={handleClose}>Close</Button>
+
+          {/* Error message in a readable box */}
+          <div
+            className="rounded-lg p-3 text-[12px] leading-relaxed"
+            style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#991B1B' }}
+          >
+            {errorMsg}
+          </div>
+
+          {/* Capacity check — often shows the root cause immediately */}
+          {isInfeasible && (
+            <div>
+              <p className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-1)' }}>
+                Root cause — over-allocated classes:
+              </p>
+              <FeasibilityPanel grades={grades} classes={classes} />
+            </div>
+          )}
+
+          {/* Actionable next steps */}
+          <div
+            className="rounded-lg p-3 space-y-1 text-[12px]"
+            style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-2)' }}
+          >
+            <p className="font-semibold text-[var(--text-1)] mb-2">What to try:</p>
+            {isInfeasible ? (
+              <>
+                <p>1. Go to <strong>Lessons</strong> and reduce hours for the red classes shown above.</p>
+                <p>2. Or increase <strong>Slots per day</strong> in School Config.</p>
+              </>
+            ) : (
+              <>
+                <p>1. <strong>Run with more restarts</strong> — the search may need more time (try 2–3×).</p>
+                <p>2. Check for very tight teacher constraints in <strong>Restrictions</strong>.</p>
+                <p>3. Reduce total lesson hours or increase slots/day in <strong>School Config</strong>.</p>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                if (!isInfeasible) setNRestarts(n => Math.min(n * 2, 200))
+                setUiState('config')
+              }}
+            >
+              {isInfeasible ? '← Back to config' : `↺ Try again with ${Math.min(nRestarts * 2, 200)} restarts`}
+            </Button>
+            <div className="flex gap-2">
+              {isInfeasible && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => { onClose(); navigate('/definitions/lessons') }}
+                >
+                  Go to Lessons →
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={handleClose}>Close</Button>
+            </div>
           </div>
         </div>
       )}
