@@ -30,7 +30,7 @@ import {
   useUpdateRestriction,
   useDeleteRestriction,
 } from '../../api/restrictions'
-import { useConfig } from '../../api/config'
+import { useConfig, useUpdateConfig } from '../../api/config'
 import { useTeachers } from '../../api/teachers'
 import { useGrades, useClasses } from '../../api/grades'
 import { useSubjects } from '../../api/subjects'
@@ -540,20 +540,126 @@ function RestrictionForm({
   )
 }
 
-// ── Hard invariants panel — read-only, always enforced ───────────
+// ── Hard invariants panel — read-only, except D7 which has subject exemptions ──
 
 const HARD_INVARIANTS = [
-  { id: 'D1', type: 'TEACHER_DOUBLE_BOOKED',         tier: 'INVARIANT',       label: 'Teacher double-booked',                description: 'A teacher cannot be scheduled in two places at the same time slot.' },
-  { id: 'D2', type: 'CLASS_DOUBLE_BOOKED',            tier: 'INVARIANT',       label: 'Class double-booked',                  description: 'A class cannot have two lessons at the same time slot.' },
-  { id: 'D3', type: 'MATH_GROUPS_NOT_SIMULTANEOUS',  tier: 'INVARIANT',       label: 'Math groups must be simultaneous',     description: 'All math level groups for the same grade must share the same time slots.' },
-  { id: 'D4', type: 'ENGLISH_GROUPS_NOT_SIMULTANEOUS', tier: 'INVARIANT',     label: 'English groups must be simultaneous',  description: 'All English level groups for the same grade must share the same time slots.' },
-  { id: 'D5', type: 'ROOM_CONFLICT',                  tier: 'INVARIANT',       label: 'Room conflict',                        description: 'Two lessons cannot occupy the same room at the same time.' },
-  { id: 'D6', type: 'SPECIALIZED_ROOM_VIOLATED',      tier: 'NON_NEGOTIABLE',  label: 'Specialized room not used',            description: 'A subject with a designated specialized room should be taught there. Can be fixed manually via the room badge.' },
-  { id: 'D7', type: 'CLASS_SUBJECT_TWICE_PER_DAY',   tier: 'INVARIANT',       label: 'Same subject twice in one day',        description: 'A class cannot have the same subject scheduled at two different time slots on the same day.' },
+  { id: 'D1', type: 'TEACHER_DOUBLE_BOOKED',           tier: 'INVARIANT',      label: 'Teacher double-booked',               description: 'A teacher cannot be scheduled in two places at the same time slot.' },
+  { id: 'D2', type: 'CLASS_DOUBLE_BOOKED',              tier: 'INVARIANT',      label: 'Class double-booked',                 description: 'A class cannot have two lessons at the same time slot.' },
+  { id: 'D3', type: 'MATH_GROUPS_NOT_SIMULTANEOUS',    tier: 'INVARIANT',      label: 'Math groups must be simultaneous',    description: 'All math level groups for the same grade must share the same time slots.' },
+  { id: 'D4', type: 'ENGLISH_GROUPS_NOT_SIMULTANEOUS', tier: 'INVARIANT',      label: 'English groups must be simultaneous', description: 'All English level groups for the same grade must share the same time slots.' },
+  { id: 'D5', type: 'ROOM_CONFLICT',                    tier: 'INVARIANT',      label: 'Room conflict',                       description: 'Two lessons cannot occupy the same room at the same time.' },
+  { id: 'D6', type: 'SPECIALIZED_ROOM_VIOLATED',        tier: 'NON_NEGOTIABLE', label: 'Specialized room not used',           description: 'A subject with a designated specialized room should be taught there. Can be fixed manually via the room badge.' },
+  { id: 'D7', type: 'CLASS_SUBJECT_TWICE_PER_DAY',     tier: 'INVARIANT',      label: 'Same subject twice in one day',       description: 'A class cannot have the same subject at two different time slots on the same day. Exceptions can be configured below.' },
 ]
 
-function HardInvariantsPanel() {
+/**
+ * D7 exception editor — subject checklist.
+ * Subjects checked here are exempt from the "no subject twice per day" hard invariant.
+ */
+function D7ExceptionEditor({
+  subjects,
+  exemptIds,
+  onChange,
+  saving,
+}: {
+  subjects: Subject[]
+  exemptIds: string[]
+  onChange: (ids: string[]) => void
+  saving: boolean
+}) {
+  const sortedSubjects = [...subjects].sort((a, b) => a.name.localeCompare(b.name, 'he'))
+  const exemptSet = new Set(exemptIds)
+
+  const toggle = (id: string) => {
+    if (exemptSet.has(id)) {
+      onChange(exemptIds.filter(x => x !== id))
+    } else {
+      onChange([...exemptIds, id])
+    }
+  }
+
+  return (
+    <div
+      className="mt-3 pt-3 border-t"
+      style={{ borderColor: 'var(--border)' }}
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-3)] mb-2">
+        Allowed twice per day
+      </p>
+      <p className="text-[11px] text-[var(--text-2)] mb-3">
+        Subjects checked below may appear at two different slots on the same day. All others still trigger a violation.
+      </p>
+      {sortedSubjects.length === 0 ? (
+        <p className="text-[11px] text-[var(--text-3)] italic">No subjects defined yet.</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {sortedSubjects.map(s => {
+            const checked = exemptSet.has(s.id)
+            return (
+              <label
+                key={s.id}
+                className="flex items-center gap-1.5 cursor-pointer px-2.5 py-1.5 rounded-lg border text-[12px] select-none transition-colors hebrew"
+                style={{
+                  background: checked ? s.color + '22' : 'var(--surface)',
+                  borderColor: checked ? s.color : 'var(--border)',
+                  color: checked ? 'var(--text-1)' : 'var(--text-2)',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(s.id)}
+                  className="w-3 h-3 accent-[var(--accent)]"
+                  disabled={saving}
+                />
+                {s.name}
+              </label>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HardInvariantsPanel({ subjects }: { subjects: Subject[] }) {
   const [open, setOpen] = useState(false)
+  const { data: config } = useConfig()
+  const updateConfig = useUpdateConfig()
+
+  // Local draft of exempt IDs — synced from server config, editable locally
+  const [exemptIds, setExemptIds] = useState<string[]>([])
+  const [dirty, setDirty] = useState(false)
+  const [saveError, setSaveError] = useState<string>()
+
+  // Sync from server when config loads
+  const serverExemptIds = config?.subjectTwicePerDayAllowed ?? []
+  // Only reset local state when opening the panel or when server value changes externally
+  const serverKey = serverExemptIds.join(',')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableServerKey = serverKey
+  const [lastSyncedKey, setLastSyncedKey] = useState('')
+  if (stableServerKey !== lastSyncedKey && !dirty) {
+    setExemptIds(serverExemptIds)
+    setLastSyncedKey(stableServerKey)
+  }
+
+  const handleChange = (ids: string[]) => {
+    setExemptIds(ids)
+    setDirty(true)
+    setSaveError(undefined)
+  }
+
+  const handleSave = async () => {
+    setSaveError(undefined)
+    try {
+      await updateConfig.mutateAsync({ subjectTwicePerDayAllowed: exemptIds } as any)
+      setDirty(false)
+    } catch (err: any) {
+      setSaveError(err?.response?.data?.error ?? 'Failed to save.')
+    }
+  }
+
   return (
     <div
       className="mb-4 rounded-lg border overflow-hidden"
@@ -568,15 +674,19 @@ function HardInvariantsPanel() {
             🔒 Built-in Hard Constraints
           </span>
           <span className="ml-2 text-[11px]" style={{ color: 'var(--text-3)' }}>
-            Always enforced — cannot be disabled
+            Always enforced — D7 has configurable exceptions
           </span>
         </div>
         <span className="text-[var(--text-3)]">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="border-t divide-y" style={{ borderColor: 'var(--border)' }}>
+        <div className="border-t" style={{ borderColor: 'var(--border)' }}>
           {HARD_INVARIANTS.map(inv => (
-            <div key={inv.id} className="flex items-start gap-3 px-4 py-3">
+            <div
+              key={inv.id}
+              className="flex items-start gap-3 px-4 py-3 border-b last:border-b-0"
+              style={{ borderColor: 'var(--border)' }}
+            >
               <span
                 className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5"
                 style={{
@@ -586,13 +696,39 @@ function HardInvariantsPanel() {
               >
                 {inv.tier === 'INVARIANT' ? '⛔ INVARIANT' : '⚠ NON-NEG.'}
               </span>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-semibold" style={{ color: 'var(--text-1)' }}>
                   {inv.id}: {inv.label}
                 </p>
                 <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-2)' }}>
                   {inv.description}
                 </p>
+
+                {/* D7 — inline subject exception editor */}
+                {inv.id === 'D7' && (
+                  <>
+                    <D7ExceptionEditor
+                      subjects={subjects}
+                      exemptIds={exemptIds}
+                      onChange={handleChange}
+                      saving={updateConfig.isPending}
+                    />
+                    {(dirty || saveError) && (
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={handleSave}
+                          loading={updateConfig.isPending}
+                        >
+                          Save exceptions
+                        </Button>
+                        {saveError && (
+                          <span className="text-[11px] text-red-500">{saveError}</span>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -999,8 +1135,8 @@ export function RestrictionsPage() {
 
       {activeTab === 'system' && (
         <>
-          {/* Built-in hard invariants — always enforced, not configurable */}
-          <HardInvariantsPanel />
+          {/* Built-in hard invariants — D7 has per-subject exceptions */}
+          <HardInvariantsPanel subjects={subjects} />
           <ListTab
             restrictions={systemRestrictions}
             maps={maps}

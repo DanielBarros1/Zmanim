@@ -24,6 +24,7 @@ const DEFAULT_CONFIG = {
     { afterSlot: 3, durationMinutes: 10 },
   ],
   workDays: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY'] as Day[],
+  subjectTwicePerDayAllowed: [] as string[],
 }
 
 const recessSchema = z.object({
@@ -31,12 +32,18 @@ const recessSchema = z.object({
   durationMinutes: z.number().int().min(1),
 })
 
+// Full schema used for validation; all fields are optional so the PATCH endpoint
+// can accept partial updates (e.g. updating only subjectTwicePerDayAllowed without
+// re-sending the entire config form).
 const configSchema = z.object({
-  dayStartTime: z.string().regex(/^\d{2}:\d{2}$/),
-  lessonDuration: z.number().int().min(30).max(120),
-  slotsPerDay: z.number().int().min(1).max(10),
-  recesses: z.array(recessSchema),
-  workDays: z.array(z.enum(['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY'])),
+  dayStartTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  lessonDuration: z.number().int().min(30).max(120).optional(),
+  slotsPerDay: z.number().int().min(1).max(10).optional(),
+  recesses: z.array(recessSchema).optional(),
+  workDays: z.array(z.enum(['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY'])).optional(),
+  // Subject IDs exempt from the "no same subject twice per day" hard invariant (D7).
+  // Send only this field from the Restrictions page without touching the rest.
+  subjectTwicePerDayAllowed: z.array(z.string().uuid()).optional(),
 })
 
 configRouter.get('/', requireAuth, async (_req, res, next) => {
@@ -54,10 +61,16 @@ configRouter.get('/', requireAuth, async (_req, res, next) => {
 
 configRouter.patch('/', requireAuth, requireAdmin, async (req, res, next) => {
   try {
-    const data = configSchema.parse(req.body)
+    const parsed = configSchema.parse(req.body)
+    // Strip undefined values — only update what was actually sent.
+    // This lets callers send partial updates (e.g. just subjectTwicePerDayAllowed)
+    // without accidentally resetting other fields.
+    const data = Object.fromEntries(
+      Object.entries(parsed).filter(([, v]) => v !== undefined)
+    )
     let config = await prisma.schoolConfig.findFirst()
     if (!config) {
-      config = await prisma.schoolConfig.create({ data })
+      config = await prisma.schoolConfig.create({ data: { ...DEFAULT_CONFIG, ...data } })
     } else {
       config = await prisma.schoolConfig.update({ where: { id: config.id }, data })
     }

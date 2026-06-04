@@ -66,7 +66,7 @@ export interface SuggestInput {
   entries: SuggestEntry[]
   lessons: any[]
   restrictions: any[]
-  config: { slotsPerDay: number; workDays: string[] }
+  config: { slotsPerDay: number; workDays: string[]; subjectTwicePerDayAllowed?: string[] }
 }
 
 export interface FixSuggestion {

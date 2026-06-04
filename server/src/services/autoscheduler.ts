@@ -107,6 +107,12 @@ async function runJob(input: JobInput): Promise<void> {
     const slotsPerDay = config?.slotsPerDay ?? 4
     const days = config?.workDays?.length ? config.workDays : DAY_ORDER
     const totalSlotsPerClass = slotsPerDay * days.length
+    // Shared eval config object — passed to all evaluate() calls so the D7 exemption
+    // list is respected during local search and gate checks.
+    const evalConfig = {
+      slotsPerDay,
+      subjectTwicePerDayAllowed: (config as any)?.subjectTwicePerDayAllowed ?? [],
+    }
 
     // ── Expand lessons into individual placement instances ─────────
     // Each lesson with hoursPerWeek=N generates N independent placements.
@@ -649,7 +655,7 @@ async function runJob(input: JobInput): Promise<void> {
         entries,
         lessons,
         restrictions,
-        config: { slotsPerDay },
+        config: evalConfig,
         overrides: [],
         // Rooms are not assigned during local search (all roomId = null).
         // Skipping room checks avoids phantom SPECIALIZED_ROOM_VIOLATED violations
@@ -711,7 +717,7 @@ async function runJob(input: JobInput): Promise<void> {
         // group lesson — absolute invariant regardless of score impact
         if (hasRegularAtGroupSlot(candidate)) continue
 
-        const cResult              = evaluate({ entries: candidate, lessons, restrictions, config: { slotsPerDay }, overrides: [], skipRoomCheck: true })
+        const cResult              = evaluate({ entries: candidate, lessons, restrictions, config: evalConfig, overrides: [], skipRoomCheck: true })
         const cHard                = compositeHard(cResult)
         const cScore               = cResult.score
         const cClassConflicts      = countClassConflicts(cResult)
@@ -877,7 +883,7 @@ async function runJob(input: JobInput): Promise<void> {
       // Gate 2: only true invariants (teacher/class double-booking etc.) block here
       const gateEval = evaluate({
         entries: enriched as any, lessons: lessons as any,
-        restrictions: [], config: { slotsPerDay }, overrides: [],
+        restrictions: [], config: evalConfig, overrides: [],
       })
       if (gateEval.counts.invariant > 0) {
         const breakdown = gateEval.violations
@@ -893,7 +899,7 @@ async function runJob(input: JobInput): Promise<void> {
 
       const fullEval = evaluate({
         entries: enriched as any, lessons: lessons as any,
-        restrictions: restrictions as any, config: { slotsPerDay }, overrides: [],
+        restrictions: restrictions as any, config: evalConfig, overrides: [],
       })
       preSaved.push({ withRooms, fullEval })
     }

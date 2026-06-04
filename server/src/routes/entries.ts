@@ -317,7 +317,7 @@ entriesRouter.post('/:id/suggest-fix', requireAuth, async (req, res, next) => {
       entries:          enrichedEntries,
       lessons:          lessons as any[],
       restrictions:     restrictions as any[],
-      config:           { slotsPerDay: config.slotsPerDay, workDays: config.workDays as string[] },
+      config:           { slotsPerDay: config.slotsPerDay, workDays: config.workDays as string[], subjectTwicePerDayAllowed: config.subjectTwicePerDayAllowed },
     })
 
     res.json(suggestions)

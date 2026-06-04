@@ -61,6 +61,9 @@ interface EvalRestriction {
 
 interface EvalConfig {
   slotsPerDay: number
+  /** Subject IDs exempt from the D7 "same subject twice per day" invariant.
+   *  These subjects are allowed to appear at two different slots on the same day. */
+  subjectTwicePerDayAllowed?: string[]
 }
 
 interface EvalInput {
@@ -94,7 +97,9 @@ export function evaluate(input: EvalInput): EvaluationResult {
     violations.push(...checkRoomConflict(entries))
     violations.push(...checkSpecializedRoom(entries))
   }
-  violations.push(...checkNoSubjectTwicePerDay(entries))
+  // D7: pass the exempt subjects so configured exceptions are respected
+  const exemptSubjects = new Set(config?.subjectTwicePerDayAllowed ?? [])
+  violations.push(...checkNoSubjectTwicePerDay(entries, exemptSubjects))
 
   // ── User-configured restrictions ─────────────────────────────
   for (const r of restrictions) {
@@ -361,8 +366,12 @@ function checkSpecializedRoom(entries: EvalEntry[]): Violation[] {
  * the same slot all land in the same bucket → size 1 → no violation.
  * If group entries are spread over two different slots (D3/D4 violation), this check
  * correctly fires as well.
+ *
+ * @param exemptSubjectIds - Subject IDs configured as allowed to appear twice per day
+ *   (set via the System tab in Restrictions → D7 Exceptions). Violations for these
+ *   subjects are silently skipped — the hard invariant is effectively lifted for them.
  */
-function checkNoSubjectTwicePerDay(entries: EvalEntry[]): Violation[] {
+function checkNoSubjectTwicePerDay(entries: EvalEntry[], exemptSubjectIds: Set<string> = new Set()): Violation[] {
   const violations: Violation[] = []
 
   // index: classId → day → subjectId → slotKey → EvalEntry[]
@@ -387,9 +396,11 @@ function checkNoSubjectTwicePerDay(entries: EvalEntry[]): Violation[] {
 
   for (const [, byDay] of index) {
     for (const [day, bySubject] of byDay) {
-      for (const [, bySlot] of bySubject) {
+      for (const [subjectId, bySlot] of bySubject) {
         if (bySlot.size <= 1) continue
-        // Same subject appears at 2+ distinct time slots on this day for this class
+        // Same subject appears at 2+ distinct time slots on this day for this class.
+        // Skip if this subject has been explicitly exempted by the user.
+        if (exemptSubjectIds.has(subjectId)) continue
         const allEntries = [...bySlot.values()].flat()
         violations.push(hardViolation(
           'CLASS_SUBJECT_TWICE_PER_DAY',

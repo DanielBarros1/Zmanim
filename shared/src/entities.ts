@@ -66,6 +66,9 @@ export interface SchoolConfig {
   slotsPerDay: number    // typically 4
   recesses: Recess[]
   workDays: Day[]
+  /** Subject IDs exempt from the D7 "no same subject twice per day" hard invariant.
+   *  Subjects listed here may be placed at two different slots on the same day.  */
+  subjectTwicePerDayAllowed: string[]
 }
 
 // ─── Subject ─────────────────────────────────────────────────
