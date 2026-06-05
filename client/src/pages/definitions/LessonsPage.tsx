@@ -623,10 +623,25 @@ export function LessonsPage() {
     if (typeFilter !== 'ALL') result = result.filter(l => l.type === typeFilter)
 
     if (gradeFilter) {
-      result = result.filter(l =>
-        l.gradeId === gradeFilter ||
-        l.classIds.some(cid => classesById.get(cid)?.gradeId === gradeFilter),
-      )
+      // gradeFilter holds either a gradeId OR a classId (class-level filtering).
+      // Distinguish by checking which map contains it.
+      if (classesById.has(gradeFilter)) {
+        // Class-level filter (e.g. "9A"): include lessons directly involving this
+        // class, plus MATH_GROUP / ENGLISH_GROUP lessons for its grade (they affect
+        // all classes in the grade, including this one).
+        const cls = classesById.get(gradeFilter)!
+        result = result.filter(l =>
+          l.classIds.includes(gradeFilter) ||
+          (l.gradeId != null && l.gradeId === cls.gradeId),
+        )
+      } else {
+        // Grade-level filter (e.g. "Grade 9"): include all lessons for any class
+        // in this grade, plus group lessons whose gradeId matches.
+        result = result.filter(l =>
+          l.gradeId === gradeFilter ||
+          l.classIds.some(cid => classesById.get(cid)?.gradeId === gradeFilter),
+        )
+      }
     }
 
     if (subjectFilter) result = result.filter(l => l.subjectId === subjectFilter)
@@ -931,17 +946,27 @@ export function LessonsPage() {
 
       {/* ── Filter & sort bar ── */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        {/* Grade */}
+        {/* Grade / Class filter — optgroups let you pick a whole grade or a single class */}
         <select
           className={FILTER_CLS}
           value={gradeFilter}
           onChange={e => setGradeFilter(e.target.value)}
-          title="Filter by grade"
+          title="Filter by grade or class"
         >
           <option value="">All grades</option>
-          {sortedGrades.map(g => (
-            <option key={g.id} value={g.id}>Grade {g.number}</option>
-          ))}
+          {sortedGrades.map(g => {
+            const gradeClasses = classes
+              .filter(c => c.gradeId === g.id)
+              .sort((a, b) => a.section.localeCompare(b.section))
+            return (
+              <optgroup key={g.id} label={`── Grade ${g.number} ──`}>
+                <option value={g.id}>Grade {g.number} (all)</option>
+                {gradeClasses.map(c => (
+                  <option key={c.id} value={c.id}>{g.number}{c.section}</option>
+                ))}
+              </optgroup>
+            )
+          })}
         </select>
 
         {/* Subject */}
@@ -1050,7 +1075,16 @@ export function LessonsPage() {
           {hasActiveFilters && (
             <span className="text-[10px] opacity-60">
               {gradeFilter
-                ? `— Grade ${sortedGrades.find(g => g.id === gradeFilter)?.number ?? '?'}`
+                ? (() => {
+                    if (classesById.has(gradeFilter)) {
+                      // Class-level: show "9A"
+                      const cls = classesById.get(gradeFilter)!
+                      const g = gradesById.get(cls.gradeId)
+                      return `— ${g ? `${g.number}${cls.section}` : cls.section}`
+                    }
+                    // Grade-level: show "Grade 9"
+                    return `— Grade ${sortedGrades.find(g => g.id === gradeFilter)?.number ?? '?'}`
+                  })()
                 : subjectFilter
                 ? `— ${subjects.find(s => s.id === subjectFilter)?.name ?? '?'}`
                 : teacherFilter
