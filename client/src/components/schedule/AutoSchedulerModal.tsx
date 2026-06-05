@@ -189,10 +189,25 @@ function useCapacityCheck(grades: Grade[], classes: Class[]) {
 
     const hoursPerClass: Record<string, number> = {}
 
+    // MATH_GROUP and ENGLISH_GROUP lessons are placed simultaneously for the whole
+    // grade (D3/D4 invariant): 3pt, 4pt, and 5pt groups all share the same slots.
+    // Counting each level separately inflates capacity by (N_groups - 1) × h/wk.
+    // Track (type, gradeId) keys and skip duplicate groups.
+    const seenGroupKeys = new Set<string>()
+
     for (const lesson of lessons) {
+      if (
+        (lesson.type === 'MATH_GROUP' || lesson.type === 'ENGLISH_GROUP') &&
+        lesson.gradeId != null
+      ) {
+        const key = `${lesson.type}:${lesson.gradeId}`
+        if (seenGroupKeys.has(key)) continue   // already counted one group for these slots
+        seenGroupKeys.add(key)
+      }
+
       // Determine which class IDs this lesson contributes to
       let affectedClassIds = [...lesson.classIds]
-      // MATH_GROUP / ENGLISH_GROUP use gradeId instead of classIds
+      // Fallback: MATH_GROUP / ENGLISH_GROUP may store gradeId only (no classIds)
       if (affectedClassIds.length === 0 && lesson.gradeId) {
         affectedClassIds = classesByGrade[lesson.gradeId] ?? []
       }

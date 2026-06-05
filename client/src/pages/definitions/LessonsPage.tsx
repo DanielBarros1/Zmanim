@@ -714,10 +714,37 @@ export function LessonsPage() {
     sortBy, sortDir, subjectsById, teachersById, classesById, gradesById,
   ])
 
-  const totalHours = useMemo(
-    () => filteredLessons.reduce((sum, l) => sum + l.hoursPerWeek, 0),
-    [filteredLessons],
-  )
+  const totalHours = useMemo(() => {
+    // When filtering by a specific class (e.g. 7A), MATH_GROUP and ENGLISH_GROUP
+    // lessons must be deduplicated before summing.
+    //
+    // Why: each level group is a separate lesson record (3pt, 4pt, 5pt), but the
+    // D3/D4 invariant forces ALL groups for a grade to run at the exact same time
+    // slots. From 7A's perspective they only occupy those N slots once — a 7A student
+    // attends exactly one group. Counting all three separately inflates the total.
+    //
+    // Dedup key: (type, gradeId) — keep only the first group's hoursPerWeek.
+    // For grade-level or unfiltered views, no dedup is needed (the overcounting
+    // cancels out when you look at the whole grade together).
+    const isClassFilter = gradeFilter !== '' && classesById.has(gradeFilter)
+    if (!isClassFilter) {
+      return filteredLessons.reduce((sum, l) => sum + l.hoursPerWeek, 0)
+    }
+    const seenGroupKeys = new Set<string>()
+    let total = 0
+    for (const l of filteredLessons) {
+      if (
+        (l.type === LessonType.MATH_GROUP || l.type === LessonType.ENGLISH_GROUP) &&
+        l.gradeId != null
+      ) {
+        const key = `${l.type}:${l.gradeId}`
+        if (seenGroupKeys.has(key)) continue  // simultaneous — don't double-count
+        seenGroupKeys.add(key)
+      }
+      total += l.hoursPerWeek
+    }
+    return total
+  }, [filteredLessons, gradeFilter, classesById])
 
   // Clear selection when filter changes
   useEffect(() => {
