@@ -1474,21 +1474,40 @@ function backtrackPhaseB(
   // shuffle order, giving different exploration paths across restarts.
   order.sort((a, b) => a.validCount - b.validCount)
 
-  // ── Slot order: random shuffle for restart diversity ─────────
+  // ── Value ordering: per-instance tiered shuffle ───────────────
   //
-  // The backtracker uses a SINGLE random ordering for all instances.  This is
-  // intentional: per-instance penalty-sorted orderings cause all instances to
-  // compete for the same "preferred" slots, creating more conflicts and
-  // dramatically increasing backtrack depth (observed: all 30 restarts timeout).
+  // Slots are split into three tiers by soft-constraint penalty, then each
+  // tier is independently Fisher-Yates shuffled:
   //
-  // Soft-constraint quality is the job of simulated annealing (local search),
-  // which starts after the backtracker finds a zero-invariant-violation state.
-  // The softLookup is preserved here for potential future use (e.g. biasing
-  // Phase A/A' slot selection) but is deliberately NOT used to sort slots in
-  // the per-instance ordering.
-  const slotOrder = fisherYates([...allSlots])
-  // Silence TS "unused" for softLookup — kept for documentation & future use.
-  void softLookup
+  //   Tier 0 — penalty = 0       (no restrictions)         → try first
+  //   Tier 1 — 0 < penalty < 100 (PREFERRED / FLEXIBLE)    → try second
+  //   Tier 2 — penalty ≥ 100     (IMPORTANT / NON_NEG.)    → try last
+  //
+  // Why tiered shuffle beats the original sort (penalty + noise[0,0.9)):
+  //   The original produced a near-deterministic ordering — all free slots
+  //   always before all restricted slots, with only 0.9 units of noise.
+  //   Every instance tried its available days in essentially the same order,
+  //   so all instances competed for the same slots simultaneously → cascade
+  //   conflicts → all 30 restarts timed out.
+  //
+  //   The tiered shuffle preserves the directional preference (free before
+  //   restricted) but randomises within each tier.  Different teachers have
+  //   different tier-0 sets (Teacher A: Mon–Thu, Teacher B: Tue–Fri), so
+  //   instances naturally spread across different slots rather than all
+  //   rushing toward the same day-1 slot-1.  Restart diversity is maintained
+  //   because Fisher-Yates produces a different shuffle every call.
+  const instanceSlotOrders = order.map(({ tids }) => {
+    const t0: Array<{ day: string; slot: number }> = []
+    const t1: Array<{ day: string; slot: number }> = []
+    const t2: Array<{ day: string; slot: number }> = []
+    for (const s of allSlots) {
+      const p = slotSoftPenalty(tids, s.day, s.slot, softLookup)
+      if      (p === 0)  t0.push(s)
+      else if (p < 100)  t1.push(s)
+      else               t2.push(s)
+    }
+    return [...fisherYates(t0), ...fisherYates(t1), ...fisherYates(t2)]
+  })
 
   // Clone occupancy so Phase A/A' state is never mutated.
   const occ: BacktrackOcc = {
@@ -1509,7 +1528,7 @@ function backtrackPhaseB(
 
     const { inst, tids } = order[idx]
 
-    for (const { day, slot } of slotOrder) {
+    for (const { day, slot } of instanceSlotOrders[idx]) {
       if (!btValid(inst, day, slot, occ, tids, hardAvail)) continue
 
       btApply(inst, day, slot, occ, tids)
