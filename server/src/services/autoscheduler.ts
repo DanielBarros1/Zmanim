@@ -256,6 +256,56 @@ async function runJob(input: JobInput): Promise<void> {
     // Convenience accessors for diagnostic logging (derived from the current best)
     const bestStats = () => topCandidates[0] ?? { invariantCount: Infinity, classConflicts: Infinity, gradeSyncConflicts: Infinity, hardCount: Infinity, score: Infinity }
 
+    // ── Seed validation (Gate S): check seed entries for hard D-invariants ──
+    // Seeded entries are copied verbatim and local search never moves them, so any
+    // D-invariant violations baked into the seed schedule will survive all restarts
+    // and cause every candidate to fail Gate 2.  Detect this NOW — before spending
+    // minutes on restarts — and fail with a clear, actionable error.
+    if (seedEntries.length > 0) {
+      // Build minimal enriched seed entries for the evaluator
+      const seedForEval = seedEntries.map((se: any) => ({
+        id: `seed-${se.id}`,
+        lessonId: se.lessonId,
+        day: se.day,
+        slot: se.slot,
+        roomId:  se.roomId  ?? null,
+        roomId2: se.roomId2 ?? null,
+        isSeeded: true,
+        overrides: [],
+        lesson: lessons.find((l: any) => l.id === se.lessonId),
+      })).filter((e: any) => e.lesson)
+
+      const seedGateCheck = evaluate({
+        entries: seedForEval as any,
+        lessons: lessons as any,
+        restrictions: [],
+        config: evalConfig,
+        overrides: [],
+        skipRoomCheck: true,
+      })
+
+      if (seedGateCheck.counts.invariant > 0) {
+        const breakdown = seedGateCheck.violations
+          .filter((v: any) => v.tier === 'INVARIANT')
+          .reduce((m: Map<string, number>, v: any) => {
+            const t = String(v.restrictionType)
+            m.set(t, (m.get(t) ?? 0) + 1)
+            return m
+          }, new Map<string, number>())
+        const detail = [...breakdown.entries()].map(([t, n]) => `${t}×${n}`).join(', ')
+        console.warn(`[AutoScheduler] ⛔ Seed schedule has ${seedGateCheck.counts.invariant} hard invariant violation(s): ${detail}`)
+        patchJob(input.jobId, { status: 'ERROR',
+          error: `The seed schedule has ${seedGateCheck.counts.invariant} hard constraint violation(s) ` +
+            `(${detail}) that cannot be fixed by the auto-scheduler. ` +
+            `Seeded lessons are fixed anchors — every restart inherits these violations and fails Gate 2. ` +
+            `Fix the seed schedule first (resolve the highlighted violations in the editor), ` +
+            `or run without a seed schedule.`,
+        })
+        return
+      }
+      console.log(`[AutoScheduler] Seed validation passed (${seedEntries.length} seeded entries, 0 hard violations)`)
+    }
+
     // Backtracking diagnostics — used to build an informative error if all restarts fail.
     let nSkippedRestarts    = 0  // restarts where backtracking returned null (timed-out OR infeasible)
     let nInfeasibleRestarts = 0  // restarts where backtracking PROVED infeasibility (not timed out)
