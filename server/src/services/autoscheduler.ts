@@ -1630,13 +1630,53 @@ function backtrackPhaseB(
   const placed: any[] = []
   let timedOut = false
 
-  function place(idx: number): boolean {
+  // Tracks which instances (by index into order[]) have been placed.
+  // Used by dynamic MRV to skip already-placed lessons each level.
+  const placedFlags = new Uint8Array(order.length)
+
+  /**
+   * Dynamic MRV backtracker.
+   *
+   * At each level we scan ALL remaining unplaced instances against the CURRENT
+   * occupancy and pick the one with the fewest valid slots (most constrained).
+   * This replaces both the static pre-sort (which used stale initOcc counts) and
+   * the separate per-value forward-check loop:
+   *
+   *   Old flow: fixed order → try value → forward-check ALL remaining (per value)
+   *   New flow: dynamic MRV scan ALL remaining → pick most constrained → try values
+   *
+   * The MRV scan doubles as a forward check: if any remaining instance has 0 valid
+   * slots we detect it immediately and return false without trying any values at the
+   * current level.  This prunes dead-end subtrees at the earliest possible moment
+   * instead of N levels later, which is the dominant cost in tight schedules.
+   *
+   * Cost per level: O(remaining × slots) — same as the old forward check, but
+   * paid once per level rather than once per value tried, so it's cheaper when
+   * a lesson's valid slots > 1.  The real win is the reduction in total nodes
+   * explored because we always branch on the variable with the least freedom.
+   */
+  function place(depth: number): boolean {
+    if (depth === order.length) return true   // all instances placed ✓
     if (Date.now() > deadline) { timedOut = true; return false }
-    if (idx === order.length)  return true   // all instances placed ✓
 
-    const { inst, tids } = order[idx]
+    // Dynamic MRV: find the unplaced instance with the fewest current valid slots.
+    // Zero valid slots on any instance means the current partial assignment is
+    // a dead end — return false immediately without descending further.
+    let bestI     = -1
+    let bestCount = Infinity
+    for (let i = 0; i < order.length; i++) {
+      if (placedFlags[i]) continue
+      const count = btCountValid(order[i].inst, occ, allSlots, order[i].tids, hardAvail)
+      if (count === 0) return false          // dead end — prune immediately
+      if (count < bestCount) { bestCount = count; bestI = i }
+    }
 
-    for (const { day, slot } of instanceSlotOrders[idx]) {
+    if (bestI === -1) return true            // safety: shouldn't reach here
+
+    placedFlags[bestI] = 1
+    const { inst, tids } = order[bestI]
+
+    for (const { day, slot } of instanceSlotOrders[bestI]) {
       if (!btValid(inst, day, slot, occ, tids, hardAvail)) continue
 
       btApply(inst, day, slot, occ, tids)
@@ -1648,22 +1688,15 @@ function backtrackPhaseB(
         lesson: inst.lesson,
       })
 
-      // Forward check: every remaining instance must still have ≥ 1 valid slot.
-      let feasible = true
-      for (let i = idx + 1; i < order.length; i++) {
-        if (btCountValid(order[i].inst, occ, allSlots, order[i].tids, hardAvail) === 0) {
-          feasible = false; break
-        }
-      }
-
-      if (feasible && place(idx + 1)) return true
+      if (place(depth + 1)) return true
 
       placed.pop()
       btUndo(inst, day, slot, occ, tids)
       if (timedOut) return false
     }
 
-    return false  // no valid slot found → backtrack
+    placedFlags[bestI] = 0
+    return false  // no valid slot found for this instance → backtrack
   }
 
   if (place(0)) return { ok: true, entries: placed }
