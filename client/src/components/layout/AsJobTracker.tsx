@@ -34,7 +34,11 @@ export function AsJobTracker() {
     setToasts(prev => prev.filter(t => t.id !== id))
 
   const pushToast = (t: Omit<ToastData, 'id'>) =>
-    setToasts(prev => [...prev, { ...t, id: newId() }])
+    // Cap at 3 toasts — drop the oldest when full so the screen never floods
+    setToasts(prev => {
+      const next = [...prev, { ...t, id: newId() }]
+      return next.length > 3 ? next.slice(next.length - 3) : next
+    })
 
   useEffect(() => {
     if (!activeAsJob) {

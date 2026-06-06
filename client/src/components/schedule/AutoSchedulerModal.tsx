@@ -345,7 +345,7 @@ function FeasibilityPanel({ grades, classes }: { grades: Grade[]; classes: Class
 
 export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
   const navigate = useNavigate()
-  const { setReviewMode, setActiveAsJob } = useUIStore()
+  const { setReviewMode, setActiveAsJob, activeAsJob } = useUIStore()
   const startAS = useStartAutoScheduler()
   const { data: schedules = [] } = useSchedules()
   const { data: grades = [] }   = useGrades()
@@ -460,6 +460,13 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
   /** Start the job and immediately close the modal — the global AsJobTracker takes over. */
   const handleStartBackground = async () => {
     if (!name.trim()) return
+    // If a background job is already running, ask before replacing it
+    if (activeAsJob) {
+      const ok = window.confirm(
+        `A background job is still running ("${activeAsJob.name}").\nReplace it with this new run?`
+      )
+      if (!ok) return
+    }
     try {
       const job = await startAS.mutateAsync({
         name: name.trim(),

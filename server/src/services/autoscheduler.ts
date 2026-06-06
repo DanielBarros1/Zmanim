@@ -1243,7 +1243,8 @@ function assignRooms(entries: any[], lessons: any[], rooms: any[]): any[] {
 // Solvable school instances typically complete in < 1 s.
 // Provably infeasible instances fail almost instantly via forward checking.
 
-const BACKTRACK_TIMEOUT_MS = 3_000  // 3 s per restart — keeps the event loop free for poll requests
+const BACKTRACK_TIMEOUT_MS = 8_000  // 8 s per restart — increased from 3 s because INVARIANT teacher
+// restrictions reduce the valid slot count and legitimately require deeper search.
 
 // ─── Soft-constraint value-ordering helpers ───────────────────
 //
@@ -1473,22 +1474,21 @@ function backtrackPhaseB(
   // shuffle order, giving different exploration paths across restarts.
   order.sort((a, b) => a.validCount - b.validCount)
 
-  // ── Value ordering: per-instance soft-constraint-aware slot lists ──
+  // ── Slot order: random shuffle for restart diversity ─────────
   //
-  // Instead of one global shuffle, compute a separate slot ordering per lesson
-  // instance, sorted by soft-constraint penalty (ascending = prefer slots that
-  // don't violate teacher availability).  A small random noise term [0, 0.9)
-  // breaks ties between equal-penalty slots, giving each restart a different
-  // exploration order while always preferring teacher-available days first.
+  // The backtracker uses a SINGLE random ordering for all instances.  This is
+  // intentional: per-instance penalty-sorted orderings cause all instances to
+  // compete for the same "preferred" slots, creating more conflicts and
+  // dramatically increasing backtrack depth (observed: all 30 restarts timeout).
   //
-  // The noise is < 1.0 (minimum non-zero penalty difference) so it never
-  // re-orders slots that have different penalty scores — only equal-penalty
-  // slots are shuffled.
-  const instanceSlotOrders = order.map(({ tids }) =>
-    allSlots
-      .map(s => ({ ...s, _k: slotSoftPenalty(tids, s.day, s.slot, softLookup) + Math.random() * 0.9 }))
-      .sort((a, b) => a._k - b._k) as Array<{ day: string; slot: number; _k: number }>
-  )
+  // Soft-constraint quality is the job of simulated annealing (local search),
+  // which starts after the backtracker finds a zero-invariant-violation state.
+  // The softLookup is preserved here for potential future use (e.g. biasing
+  // Phase A/A' slot selection) but is deliberately NOT used to sort slots in
+  // the per-instance ordering.
+  const slotOrder = fisherYates([...allSlots])
+  // Silence TS "unused" for softLookup — kept for documentation & future use.
+  void softLookup
 
   // Clone occupancy so Phase A/A' state is never mutated.
   const occ: BacktrackOcc = {
@@ -1509,7 +1509,7 @@ function backtrackPhaseB(
 
     const { inst, tids } = order[idx]
 
-    for (const { day, slot } of instanceSlotOrders[idx]) {
+    for (const { day, slot } of slotOrder) {
       if (!btValid(inst, day, slot, occ, tids, hardAvail)) continue
 
       btApply(inst, day, slot, occ, tids)
