@@ -19,3 +19,14 @@ jobs:
             cd /opt/zmanim
             git pull
             sudo docker compose -f docker-compose.prod.yml up -d --build
+
+      - name: Notify Telegram
+        uses: appleboy/telegram-action@v0.1.1
+        if: success()
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message: |
+            ✅ Zmanim deployed
+            Commit: ${{ github.event.head_commit.message }}
+            By: ${{ github.actor }}
