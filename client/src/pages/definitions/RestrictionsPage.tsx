@@ -14,7 +14,7 @@
  * numeric limits) rather than showing "…" for everything.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AppShell } from '../../components/layout/AppShell'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
@@ -930,6 +930,130 @@ function ListTab({
   )
 }
 
+// ── Bulk tier-change modal ───────────────────────────────────────
+//
+// Lets admins update the tier of an existing restriction across all teachers
+// who have it in one click — useful after using "Add rule for all teachers"
+// with the wrong tier.
+
+function BulkTierEditModal({
+  open,
+  onClose,
+  teacherRestrictions,
+  onUpdate,
+  updating,
+}: {
+  open: boolean
+  onClose: () => void
+  teacherRestrictions: Restriction[]
+  onUpdate: (ids: string[], tier: RestrictionTier) => Promise<void>
+  updating: boolean
+}) {
+  const [selectedType, setSelectedType] = useState<RestrictionType | ''>('')
+  const [selectedTier, setSelectedTier] = useState<RestrictionTier>(RestrictionTier.NON_NEGOTIABLE)
+  const [done, setDone] = useState(false)
+
+  // Reset when modal opens
+  useEffect(() => {
+    if (open) { setSelectedType(''); setSelectedTier(RestrictionTier.NON_NEGOTIABLE); setDone(false) }
+  }, [open])
+
+  // Distinct types that appear for at least one teacher, sorted by count desc
+  const typeCounts = new Map<RestrictionType, number>()
+  for (const r of teacherRestrictions) {
+    typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1)
+  }
+  const typeOptions = [...typeCounts.entries()].sort((a, b) => b[1] - a[1])
+
+  const matchingIds = selectedType
+    ? teacherRestrictions.filter(r => r.type === selectedType).map(r => r.id)
+    : []
+
+  const handleSubmit = async () => {
+    if (!matchingIds.length) return
+    await onUpdate(matchingIds, selectedTier)
+    setDone(true)
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Edit Tier for All Teachers" width="max-w-md">
+      {done ? (
+        <div className="space-y-4 text-center py-2">
+          <p className="text-2xl">✅</p>
+          <p className="text-[14px] font-semibold" style={{ color: 'var(--text-1)' }}>
+            Updated {matchingIds.length} restriction{matchingIds.length !== 1 ? 's' : ''}
+          </p>
+          <Button onClick={onClose}>Close</Button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <p className="text-[12px]" style={{ color: 'var(--text-2)' }}>
+            Select the restriction type you want to update and the new tier.
+            All teachers who have that restriction will be updated at once.
+          </p>
+
+          <div>
+            <label className="text-[12px] font-medium text-[var(--text-2)]">Restriction type</label>
+            <select
+              className="mt-1 w-full appearance-none rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[13px] text-[var(--text-1)] focus:outline-none focus:border-[var(--accent)]"
+              value={selectedType}
+              onChange={e => setSelectedType(e.target.value as RestrictionType)}
+            >
+              <option value="">Select type…</option>
+              {typeOptions.map(([t, count]) => (
+                <option key={t} value={t}>
+                  {RESTRICTION_TYPE_LABEL[t].replace(/\{[^}]+\}/g, '…').slice(0, 55)}
+                  {` — ${count} teacher${count !== 1 ? 's' : ''}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <Select
+              label="New tier"
+              value={selectedTier}
+              onChange={e => setSelectedTier(e.target.value as RestrictionTier)}
+            >
+              {USER_TIERS.map(t => (
+                <option key={t} value={t}>
+                  {t === RestrictionTier.INVARIANT ? `⛔ ${TIER_LABEL[t]}` : TIER_LABEL[t]}
+                </option>
+              ))}
+            </Select>
+            {selectedTier === RestrictionTier.INVARIANT && (
+              <p className="mt-1 text-[11px] px-1" style={{ color: '#7c3aed' }}>
+                ⛔ The auto-scheduler will treat violations as physically impossible (1B penalty).
+              </p>
+            )}
+          </div>
+
+          {matchingIds.length > 0 && (
+            <div
+              className="rounded-md px-3 py-2 text-[12px]"
+              style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-2)' }}
+            >
+              Will update <strong>{matchingIds.length} restriction{matchingIds.length !== 1 ? 's' : ''}</strong> to{' '}
+              <strong>{TIER_LABEL[selectedTier]}</strong>.
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={!selectedType || matchingIds.length === 0}
+              loading={updating}
+            >
+              Update {matchingIds.length > 0 ? `${matchingIds.length} restriction${matchingIds.length !== 1 ? 's' : ''}` : ''}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────────
 
 export function RestrictionsPage() {
@@ -951,6 +1075,8 @@ export function RestrictionsPage() {
   const [deleteError, setDeleteError] = useState<string | undefined>()
   const [preselectedTeacherId, setPreselectedTeacherId] = useState<string | undefined>()
   const [bulkTeacherMode, setBulkTeacherMode] = useState(false)
+  const [bulkTierEditOpen, setBulkTierEditOpen] = useState(false)
+  const [bulkTierUpdating, setBulkTierUpdating] = useState(false)
   // Incrementing key forces the form to remount (reset all fields) after "Save & Add Another"
   const [formKey, setFormKey] = useState(0)
 
@@ -1046,6 +1172,15 @@ export function RestrictionsPage() {
     }
   }
 
+  const handleBulkTierUpdate = async (ids: string[], tier: RestrictionTier) => {
+    setBulkTierUpdating(true)
+    try {
+      await Promise.all(ids.map(id => updateRestriction.mutateAsync({ id, data: { tier } })))
+    } finally {
+      setBulkTierUpdating(false)
+    }
+  }
+
   const handleAvailabilitySave = async (cells: AvailabilityCell[]) => {
     if (!availabilityTeacherId) return
     setAvailabilitySaving(true)
@@ -1118,7 +1253,13 @@ export function RestrictionsPage() {
       {/* Tab content */}
       {activeTab === 'teachers' && (
         <>
-          <div className="flex justify-end mb-3">
+          <div className="flex justify-end gap-2 mb-3">
+            <Button variant="secondary" size="sm" onClick={() => setBulkTierEditOpen(true)}
+              disabled={teacherRestrictions.length === 0}
+              title="Change the tier of an existing rule across all teachers at once"
+            >
+              ✏️ Edit tier for all teachers
+            </Button>
             <Button variant="secondary" size="sm" onClick={openBulkModal}>
               ⚡ Add rule for all teachers
             </Button>
@@ -1192,6 +1333,15 @@ export function RestrictionsPage() {
         danger
         loading={deleteRestriction.isPending}
         error={deleteError}
+      />
+
+      {/* Bulk tier-change modal */}
+      <BulkTierEditModal
+        open={bulkTierEditOpen}
+        onClose={() => setBulkTierEditOpen(false)}
+        teacherRestrictions={teacherRestrictions}
+        onUpdate={handleBulkTierUpdate}
+        updating={bulkTierUpdating}
       />
 
       {/* Teacher availability grid modal */}
