@@ -1016,15 +1016,31 @@ async function runJob(input: JobInput): Promise<void> {
       }
     }
 
-    // ── Gate 2: only AS-introduced invariant violations block here ──
-    // Seeded-only violations are excluded (user-accepted).
+    // ── Gate 2: only physical impossibilities block here ──
+    // Seeded-only violations are excluded (user-accepted anchors).
+    // CLASS_SUBJECT_TWICE_PER_DAY (D7) is intentionally excluded from blocking:
+    // it is a *quality* issue, not a physical impossibility.  With very tight
+    // constraints (100% class capacity + many INVARIANT teacher blocks) Phase A
+    // sometimes cannot avoid placing a group lesson on a day that creates a D7
+    // conflict — discarding the entire schedule in that case is worse than saving
+    // it with the violation visible in the editor where it can be manually fixed.
+    // D7 violations still appear in the full evaluation so the user can see them.
+    const GATE2_BLOCKING_TYPES = new Set([
+      'TEACHER_DOUBLE_BOOKED',   // D1 — teacher physically in two places
+      'CLASS_DOUBLE_BOOKED',     // D2 — class physically in two places
+      'LESSON_GRADE_SYNC',       // D3/D4 — math/english groups out of sync
+    ])
+
     const gateEval = evaluate({
       entries: enriched as any, lessons: lessons as any,
       restrictions: [], config: evalConfig, overrides: [],
     })
     const gate2SeededIds = new Set(enriched.filter((e: any) => e.isSeeded).map((e: any) => e.id))
     const gate2Blocked = gateEval.violations.filter(
-      (v: any) => v.tier === 'INVARIANT' && !v.isOverridden && !isSeededOnlyViolation(v, gate2SeededIds)
+      (v: any) => v.tier === 'INVARIANT'
+        && !v.isOverridden
+        && !isSeededOnlyViolation(v, gate2SeededIds)
+        && GATE2_BLOCKING_TYPES.has(String(v.restrictionType))
     )
     if (gate2Blocked.length > 0) {
       const breakdown = gate2Blocked
@@ -1034,8 +1050,8 @@ async function runJob(input: JobInput): Promise<void> {
       const detail = [...breakdown.entries()].map(([t,n]) => `${t}×${n}`).join(', ')
       console.warn(`[AutoScheduler] Failed Gate 2 (${detail})`)
       jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100,
-        error: `All candidate schedules had unresolvable scheduling conflicts after room assignment ` +
-          `(teacher or class double-booking). This is usually caused by group lessons (Math/English) ` +
+        error: `The auto-scheduler produced a schedule with unresolvable double-bookings ` +
+          `(${detail}). This is usually caused by group lessons (Math/English) ` +
           `having too few available time slots due to INVARIANT teacher restrictions. ` +
           `Try: (1) reducing INVARIANT availability blocks in Restrictions → Teachers, ` +
           `(2) increasing "Slots per day" in School Config, ` +
@@ -1043,8 +1059,17 @@ async function runJob(input: JobInput): Promise<void> {
       })
       return
     }
-    if (gateEval.counts.invariant > gate2Blocked.length) {
-      console.log(`[AutoScheduler] Gate 2: ${gateEval.counts.invariant - gate2Blocked.length} seeded-only violation(s) excluded`)
+    // Log any non-blocking Gate 2 violations (D7 or seeded-only) for observability
+    const nonBlockingInvariants = gateEval.violations.filter(
+      (v: any) => v.tier === 'INVARIANT' && !v.isOverridden
+        && (!GATE2_BLOCKING_TYPES.has(String(v.restrictionType)) || isSeededOnlyViolation(v, gate2SeededIds))
+    )
+    if (nonBlockingInvariants.length > 0) {
+      const breakdown = nonBlockingInvariants
+        .reduce((m: Map<string,number>, v: any) => {
+          const t = String(v.restrictionType); m.set(t, (m.get(t) ?? 0) + 1); return m
+        }, new Map<string,number>())
+      console.log(`[AutoScheduler] Gate 2 passed (non-blocking violations: ${[...breakdown.entries()].map(([t,n]) => `${t}×${n}`).join(', ')})`)
     }
 
     const fullEval = evaluate({
