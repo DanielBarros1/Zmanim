@@ -256,13 +256,16 @@ async function runJob(input: JobInput): Promise<void> {
     // Convenience accessors for diagnostic logging (derived from the current best)
     const bestStats = () => topCandidates[0] ?? { invariantCount: Infinity, classConflicts: Infinity, gradeSyncConflicts: Infinity, hardCount: Infinity, score: Infinity }
 
-    // ── Seed validation (Gate S): check seed entries for hard D-invariants ──
-    // Seeded entries are copied verbatim and local search never moves them, so any
-    // D-invariant violations baked into the seed schedule will survive all restarts
-    // and cause every candidate to fail Gate 2.  Detect this NOW — before spending
-    // minutes on restarts — and fail with a clear, actionable error.
+    // ── Seed validation (Gate S): surface hard D-invariants in the seed ──
+    // Seeded entries are user-verified fixed anchors.  Violations within them are
+    // ACCEPTED — the user deliberately placed those lessons despite the conflict.
+    // Gate 2 and local search exclude seeded-only violations so they don't block
+    // the run or distort the SA temperature.
+    //
+    // Gate S just logs a warning so the situation is visible in the server logs.
+    // It never blocks the run.
+    let nSeedInvariants = 0
     if (seedEntries.length > 0) {
-      // Build minimal enriched seed entries for the evaluator
       const seedForEval = seedEntries.map((se: any) => ({
         id: `seed-${se.id}`,
         lessonId: se.lessonId,
@@ -284,7 +287,8 @@ async function runJob(input: JobInput): Promise<void> {
         skipRoomCheck: true,
       })
 
-      if (seedGateCheck.counts.invariant > 0) {
+      nSeedInvariants = seedGateCheck.counts.invariant
+      if (nSeedInvariants > 0) {
         const breakdown = seedGateCheck.violations
           .filter((v: any) => v.tier === 'INVARIANT')
           .reduce((m: Map<string, number>, v: any) => {
@@ -293,17 +297,24 @@ async function runJob(input: JobInput): Promise<void> {
             return m
           }, new Map<string, number>())
         const detail = [...breakdown.entries()].map(([t, n]) => `${t}×${n}`).join(', ')
-        console.warn(`[AutoScheduler] ⛔ Seed schedule has ${seedGateCheck.counts.invariant} hard invariant violation(s): ${detail}`)
-        patchJob(input.jobId, { status: 'ERROR',
-          error: `The seed schedule has ${seedGateCheck.counts.invariant} hard constraint violation(s) ` +
-            `(${detail}) that cannot be fixed by the auto-scheduler. ` +
-            `Seeded lessons are fixed anchors — every restart inherits these violations and fails Gate 2. ` +
-            `Fix the seed schedule first (resolve the highlighted violations in the editor), ` +
-            `or run without a seed schedule.`,
-        })
-        return
+        console.warn(
+          `[AutoScheduler] ⚠ Seed has ${nSeedInvariants} hard invariant violation(s): ${detail} — ` +
+          `treating as user-accepted (excluded from Gate 2 and local search hard count)`
+        )
+      } else {
+        console.log(`[AutoScheduler] Seed validation: ${seedEntries.length} seeded entries, 0 hard violations`)
       }
-      console.log(`[AutoScheduler] Seed validation passed (${seedEntries.length} seeded entries, 0 hard violations)`)
+    }
+
+    /**
+     * Returns true when ALL entry IDs in a violation are seeded entries.
+     * Such violations are user-accepted (the seed was manually verified) and are
+     * excluded from Gate 2 and from the local-search hard-violation count so they
+     * don't block the run or distort simulated annealing.
+     */
+    function isSeededOnlyViolation(v: any, seededIds: Set<string>): boolean {
+      const ids = v.affectedEntryIds as string[]
+      return ids.length > 0 && ids.every((id: string) => seededIds.has(id))
     }
 
     // Backtracking diagnostics — used to build an informative error if all restarts fail.
@@ -780,13 +791,23 @@ async function runJob(input: JobInput): Promise<void> {
       const countGradeSyncConflicts = (r: any): number =>
         r.violations.filter((v: any) => v.restrictionType === 'LESSON_GRADE_SYNC' && !v.isOverridden).length
 
+      // Seeded entry ID set — stable throughout local search (seeded entries never move).
+      // Used to exclude seeded-only violations from the hard-violation count so that
+      // manually accepted conflicts in the seed don't inflate hardCount and distort SA.
+      const localSeededIds = new Set(entries.filter((e: any) => e.isSeeded).map((e: any) => e.id))
+
       // compositeHard: INVARIANT violations take absolute priority over NON_NEGOTIABLE.
       // Multiplying invariant count by 10 000 ensures any increase in invariants
       // always outweighs any reduction in non-negotiable violations, so local search
       // can never trade an invariant for a non-negotiable improvement.
-      // Before the INVARIANT-tier refactor, hardCount was counts.nonNegotiable alone
-      // because hard violations used NON_NEGOTIABLE tier — that was the source of this bug.
-      const compositeHard = (r: any) => r.counts.invariant * 10_000 + r.counts.nonNegotiable
+      // Seeded-only violations are excluded — they are user-accepted and the AS cannot
+      // change them (seeded entries are immovable anchors).
+      const compositeHard = (r: any) => {
+        const adjustedInvariants = (r.violations as any[])
+          .filter((v: any) => v.tier === 'INVARIANT' && !v.isOverridden && !isSeededOnlyViolation(v, localSeededIds))
+          .length
+        return adjustedInvariants * 10_000 + r.counts.nonNegotiable
+      }
 
       let evalResult        = evalCurrent()
       let score             = evalResult.score
@@ -879,7 +900,11 @@ async function runJob(input: JobInput): Promise<void> {
       }
 
       // Count hard INVARIANT-tier violations in this restart's result.
-      const invariantCount = evalResult.counts.invariant
+      // Exclude seeded-only violations from the ranking invariant count so candidates
+      // with accepted seed violations rank on the same footing as clean ones.
+      const invariantCount = (evalResult.violations as any[])
+        .filter((v: any) => v.tier === 'INVARIANT' && !v.isOverridden && !isSeededOnlyViolation(v, localSeededIds))
+        .length
 
       // ── All-lessons-placed check (per restart) ──────────────────────
       // Verify every instance that was in toPlace has a corresponding
@@ -1015,14 +1040,19 @@ async function runJob(input: JobInput): Promise<void> {
         }
       }
 
-      // Gate 2: only true invariants (teacher/class double-booking etc.) block here
+      // Gate 2: only true invariants (teacher/class double-booking etc.) block here.
+      // Violations where ALL affected entries are seeded are excluded — they represent
+      // user-accepted conflicts in the manually-verified seed and cannot be fixed by the AS.
       const gateEval = evaluate({
         entries: enriched as any, lessons: lessons as any,
         restrictions: [], config: evalConfig, overrides: [],
       })
-      if (gateEval.counts.invariant > 0) {
-        const breakdown = gateEval.violations
-          .filter((v: any) => v.tier === 'INVARIANT')
+      const gate2SeededIds = new Set(enriched.filter((e: any) => e.isSeeded).map((e: any) => e.id))
+      const gate2Blocked = gateEval.violations.filter(
+        (v: any) => v.tier === 'INVARIANT' && !v.isOverridden && !isSeededOnlyViolation(v, gate2SeededIds)
+      )
+      if (gate2Blocked.length > 0) {
+        const breakdown = gate2Blocked
           .reduce((m: Map<string,number>, v: any) => {
             const t = String(v.restrictionType)
             m.set(t, (m.get(t) ?? 0) + 1)
@@ -1030,6 +1060,9 @@ async function runJob(input: JobInput): Promise<void> {
           }, new Map<string,number>())
         console.warn(`[AutoScheduler] Candidate ${i + 1} failed Gate 2 (${[...breakdown.entries()].map(([t,n]) => `${t}×${n}`).join(', ')}) — skipping`)
         continue
+      }
+      if (gateEval.counts.invariant > gate2Blocked.length) {
+        console.log(`[AutoScheduler] Candidate ${i + 1} Gate 2: ${gateEval.counts.invariant - gate2Blocked.length} seeded-only violation(s) excluded`)
       }
 
       const fullEval = evaluate({
