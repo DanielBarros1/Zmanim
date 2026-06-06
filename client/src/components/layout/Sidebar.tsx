@@ -42,7 +42,8 @@ const SCHEDULE_NAV: NavItem[] = [
 
 /** Shown only to root users (email in ALLOWED_EMAILS env). */
 const ADMIN_NAV: NavItem[] = [
-  { to: '/users', label: 'Users', icon: '👥' },
+  { to: '/users',      label: 'Users',       icon: '👥' },
+  { to: '/admin/logs', label: 'Server Logs', icon: '🔍' },
 ]
 
 const VIEWS_NAV: NavItem[] = [

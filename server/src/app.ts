@@ -8,6 +8,12 @@
  */
 
 import 'dotenv/config'
+import { installLogCapture } from './services/logBuffer'
+
+// Install output capture ASAP — before any routes or middleware log anything.
+// Intercepts process.stdout/stderr so worker-thread AS logs are captured too.
+installLogCapture()
+
 import express from 'express'
 import path from 'path'
 import session from 'express-session'
@@ -29,6 +35,7 @@ import { entriesRouter } from './routes/entries'
 import { autoschedulerRouter } from './routes/autoscheduler'
 import { importRouter } from './routes/import'
 import { usersRouter } from './routes/users'
+import { logsRouter } from './routes/logs'
 
 const app = express()
 const PORT = process.env.PORT ?? 3001
@@ -86,6 +93,7 @@ app.use('/api/schedules', entriesRouter)       // /api/schedules/:id/entries
 app.use('/api/schedules/auto', autoschedulerRouter)
 app.use('/api/import', importRouter)
 app.use('/api/users', usersRouter)
+app.use('/api/logs',  logsRouter)
 
 // ─── Health check ─────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok' }))

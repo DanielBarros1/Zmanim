@@ -25,6 +25,8 @@ import { useLessons } from '../../api/lessons'
 import { useClasses, useGrades } from '../../api/grades'
 import { useConfig } from '../../api/config'
 import apiClient from '../../api/client'
+import { fetchLogs } from '../../api/logs'
+import type { ServerLogEntry } from '../../api/logs'
 import type { Grade, Class } from '@zmanim/shared'
 
 interface AutoSchedulerModalProps {
@@ -335,6 +337,106 @@ function FeasibilityPanel({ grades, classes }: { grades: Grade[]; classes: Class
       {hasProblems && (
         <div className="px-3 py-2 text-[11px]" style={{ background: '#FEF2F2', color: '#DC2626' }}>
           Remove or reduce hours for the red classes in the Lessons page before running.
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Server log panel (shown in error state) ───────────────────
+//
+// Fetches the last 150 [AutoScheduler] lines from the server log buffer.
+// Root-only — non-root users get a 403 which renders gracefully.
+
+function ServerLogsPanel() {
+  const [expanded, setExpanded] = useState(false)
+  const [loading,  setLoading]  = useState(false)
+  const [entries,  setEntries]  = useState<ServerLogEntry[]>([])
+  const [fetchErr, setFetchErr] = useState('')
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  const load = async () => {
+    setLoading(true)
+    setFetchErr('')
+    try {
+      const data = await fetchLogs({ lines: 150, filter: 'AutoScheduler' })
+      setEntries(data.entries)
+    } catch (err: any) {
+      setFetchErr(
+        err?.response?.status === 403
+          ? 'Root access required.'
+          : 'Failed to fetch logs.'
+      )
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggle = () => {
+    if (!expanded && entries.length === 0 && !fetchErr) load()
+    setExpanded(v => !v)
+  }
+
+  // Scroll to bottom when entries arrive
+  useEffect(() => {
+    if (expanded && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: 'instant' })
+    }
+  }, [expanded, entries])
+
+  return (
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+      {/* Header / toggle */}
+      <div
+        className="flex items-center justify-between px-3 py-2 cursor-pointer hover:opacity-90"
+        style={{ background: 'var(--surface-2)' }}
+        onClick={toggle}
+      >
+        <span className="text-[12px] font-medium" style={{ color: 'var(--text-2)' }}>
+          🔍 Server logs {expanded ? '▲' : '▼'}
+        </span>
+        {expanded && (
+          <button
+            className="text-[11px] px-2 py-0.5 rounded transition-colors hover:opacity-80"
+            style={{ background: 'var(--surface)', color: 'var(--text-3)', border: '1px solid var(--border)' }}
+            onClick={e => { e.stopPropagation(); load() }}
+          >
+            ↻ Refresh
+          </button>
+        )}
+      </div>
+
+      {/* Log body */}
+      {expanded && (
+        <div
+          className="font-mono text-[10px] leading-relaxed overflow-y-auto"
+          style={{ background: '#0f172a', maxHeight: 240 }}
+        >
+          {loading ? (
+            <p className="p-3 text-slate-400">Loading…</p>
+          ) : fetchErr ? (
+            <p className="p-3" style={{ color: '#f87171' }}>{fetchErr}</p>
+          ) : entries.length === 0 ? (
+            <p className="p-3 text-slate-500">No [AutoScheduler] log entries found.</p>
+          ) : (
+            <table className="w-full border-collapse">
+              <tbody>
+                {entries.map((e, i) => (
+                  <tr key={i} className="hover:bg-white/5">
+                    <td className="pl-3 pr-2 py-0.5 whitespace-nowrap align-top select-none w-24"
+                      style={{ color: '#334155' }}>
+                      {e.ts.replace('T', ' ').slice(0, 23)}
+                    </td>
+                    <td className="pr-3 py-0.5 break-all align-top"
+                      style={{ color: e.level === 'error' ? '#f87171' : '#93c5fd' }}>
+                      {e.msg}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div ref={bottomRef} />
         </div>
       )}
     </div>
@@ -752,6 +854,9 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
               </>
             )}
           </div>
+
+          {/* Server log panel — helps diagnose root causes */}
+          <ServerLogsPanel />
 
           <div className="flex items-center justify-between gap-2 pt-1">
             <Button
