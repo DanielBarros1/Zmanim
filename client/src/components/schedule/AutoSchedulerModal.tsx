@@ -20,6 +20,7 @@ import { useStartAutoScheduler, fetchJobStatus } from '../../api/schedules'
 import type { CandidateResult } from '../../api/schedules'
 import { useSchedules } from '../../api/schedules'
 import { useUIStore } from '../../store/uiStore'
+import type { ActiveAsJob } from '../../store/uiStore'
 import { useLessons } from '../../api/lessons'
 import { useClasses, useGrades } from '../../api/grades'
 import { useConfig } from '../../api/config'
@@ -344,7 +345,7 @@ function FeasibilityPanel({ grades, classes }: { grades: Grade[]; classes: Class
 
 export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
   const navigate = useNavigate()
-  const { setReviewMode } = useUIStore()
+  const { setReviewMode, setActiveAsJob } = useUIStore()
   const startAS = useStartAutoScheduler()
   const { data: schedules = [] } = useSchedules()
   const { data: grades = [] }   = useGrades()
@@ -360,8 +361,8 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
     return `Auto Schedule ${d.toLocaleDateString('en-IL')}`
   })
   const [seedScheduleId, setSeedScheduleId] = useState<string>('')
-  const [nRestarts, setNRestarts] = useState(50)
-  const [nIterations, setNIterations] = useState(1000)
+  const [nRestarts, setNRestarts] = useState(30)
+  const [nIterations, setNIterations] = useState(3000)
 
   // ── Runtime state ───────────────────────────────────────────────
   const [uiState, setUiState] = useState<UIState>('config')
@@ -456,6 +457,24 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
     }
   }
 
+  /** Start the job and immediately close the modal — the global AsJobTracker takes over. */
+  const handleStartBackground = async () => {
+    if (!name.trim()) return
+    try {
+      const job = await startAS.mutateAsync({
+        name: name.trim(),
+        seedScheduleId: seedScheduleId || undefined,
+        config: { nRestarts, nIterations },
+      })
+      const activeJob: ActiveAsJob = { jobId: job.jobId, name: name.trim(), startedAt: Date.now() }
+      setActiveAsJob(activeJob)
+      onClose()
+    } catch (err: any) {
+      setUiState('error')
+      setErrorMsg(err?.response?.data?.error ?? err?.message ?? 'Failed to start auto-scheduler.')
+    }
+  }
+
   const toggleCandidate = (id: string) => {
     setCheckedIds(prev => {
       const next = new Set(prev)
@@ -488,7 +507,12 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
   }
 
   const handleClose = () => {
-    if (uiState === 'running') return
+    // If the job is running and user closes, promote it to a background job
+    // so the AsJobTracker keeps polling and shows a notification when done.
+    if (uiState === 'running' && jobId) {
+      const activeJob: ActiveAsJob = { jobId, name: name.trim(), startedAt: Date.now() }
+      setActiveAsJob(activeJob)
+    }
     onClose()
   }
 
@@ -539,28 +563,43 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
             <div className="space-y-1">
               <Input label="Restarts" type="number" min={1} max={200} value={nRestarts}
                 onChange={e => setNRestarts(Number(e.target.value))} />
-              <p className="text-[10px] text-[var(--text-3)]">More = better quality, slower</p>
+              <p className="text-[10px] text-[var(--text-3)]">Independent starting points — more = better diversity</p>
             </div>
             <div className="space-y-1">
-              <Input label="Iterations per restart" type="number" min={100} max={10000} step={100}
+              <Input label="Iterations / restart" type="number" min={500} max={50000} step={500}
                 value={nIterations} onChange={e => setNIterations(Number(e.target.value))} />
-              <p className="text-[10px] text-[var(--text-3)]">Local search steps per restart</p>
+              <p className="text-[10px] text-[var(--text-3)]">SA steps per restart — more = better convergence</p>
             </div>
           </div>
 
           {/* Capacity check — shows over-allocated classes before wasting restarts */}
           <FeasibilityPanel grades={grades} classes={classes} />
 
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="secondary" onClick={handleClose}>Cancel</Button>
-            <Button
-              onClick={handleStart}
-              loading={startAS.isPending}
-              disabled={!name.trim()}
-              title={isInfeasible ? 'One or more classes are over capacity — the run will likely fail' : undefined}
-            >
-              {isInfeasible ? '⚠️ Run Anyway' : '🚀 Run Auto-Scheduler'}
-            </Button>
+          <div className="pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
+            <p className="text-[11px] mb-3" style={{ color: 'var(--text-3)' }}>
+              <strong style={{ color: 'var(--text-2)' }}>Run</strong> blocks the screen with a live progress bar.{' '}
+              <strong style={{ color: 'var(--text-2)' }}>Run in Background</strong> closes this modal immediately — a notification appears when done.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={handleClose}>Cancel</Button>
+              <Button
+                variant="secondary"
+                onClick={handleStartBackground}
+                loading={startAS.isPending}
+                disabled={!name.trim()}
+                title={isInfeasible ? 'One or more classes are over capacity — the run will likely fail' : undefined}
+              >
+                {isInfeasible ? '⚠️ Background Anyway' : '🌙 Run in Background'}
+              </Button>
+              <Button
+                onClick={handleStart}
+                loading={startAS.isPending}
+                disabled={!name.trim()}
+                title={isInfeasible ? 'One or more classes are over capacity — the run will likely fail' : undefined}
+              >
+                {isInfeasible ? '⚠️ Run Anyway' : '🚀 Run'}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -600,9 +639,11 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
             <span style={{ color: 'var(--text-2)' }}>{statusMessage || 'Starting…'}</span>
           </div>
 
-          <p className="text-center text-[11px] text-[var(--text-3)]">
-            Do not close this window while the scheduler is running.
-          </p>
+          <div className="text-center">
+            <p className="text-[11px] text-[var(--text-3)]">
+              You can close this window — results will appear as a notification.
+            </p>
+          </div>
         </div>
       )}
 

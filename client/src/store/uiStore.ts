@@ -9,6 +9,13 @@
 import { create } from 'zustand'
 import { Day } from '@zmanim/shared'
 
+/** Background AS job being tracked globally (survives modal close + page refresh). */
+export interface ActiveAsJob {
+  jobId: string
+  name: string
+  startedAt: number  // Date.now() when the job was started
+}
+
 interface UIState {
   // Dark mode
   isDark: boolean
@@ -25,6 +32,10 @@ interface UIState {
   // Sidebar collapse
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+
+  // Background AS job tracking
+  activeAsJob: ActiveAsJob | null
+  setActiveAsJob: (job: ActiveAsJob | null) => void
 }
 
 /** Sync data-theme attribute to match current dark mode state */
@@ -45,6 +56,15 @@ function getInitialDark(): boolean {
 
 function getInitialSidebarCollapsed(): boolean {
   return localStorage.getItem('zmanim-sidebar-collapsed') === 'true'
+}
+
+function getInitialActiveAsJob(): ActiveAsJob | null {
+  try {
+    const raw = localStorage.getItem('zmanim-active-as-job')
+    return raw ? (JSON.parse(raw) as ActiveAsJob) : null
+  } catch {
+    return null
+  }
 }
 
 const initialDark = getInitialDark()
@@ -73,4 +93,14 @@ export const useUIStore = create<UIState>(set => ({
       localStorage.setItem('zmanim-sidebar-collapsed', String(next))
       return { sidebarCollapsed: next }
     }),
+
+  activeAsJob: getInitialActiveAsJob(),
+  setActiveAsJob: job => {
+    if (job) {
+      localStorage.setItem('zmanim-active-as-job', JSON.stringify(job))
+    } else {
+      localStorage.removeItem('zmanim-active-as-job')
+    }
+    set({ activeAsJob: job })
+  },
 }))

@@ -17,6 +17,7 @@
 import type { ReactNode } from 'react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { AsJobTracker } from './AsJobTracker'
 
 interface AppShellProps {
   title: string
@@ -29,6 +30,7 @@ interface AppShellProps {
 export function AppShell({ title, actions, children, noScroll }: AppShellProps) {
   return (
     <>
+      <AsJobTracker />
       <Sidebar />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Topbar title={title} actions={actions} />

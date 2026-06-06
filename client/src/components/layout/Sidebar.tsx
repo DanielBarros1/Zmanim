@@ -14,6 +14,7 @@
  * Inactive item: text-2, ghost hover.
  */
 
+import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useCurrentUser, useLogout } from '../../api/auth'
 import { useUIStore } from '../../store/uiStore'
@@ -54,10 +55,13 @@ function NavSection({
   label,
   items,
   collapsed,
+  badges,
 }: {
   label: string
   items: NavItem[]
   collapsed: boolean
+  /** Optional badge content keyed by item `to` path */
+  badges?: Record<string, ReactNode>
 }) {
   return (
     <div className="mb-5">
@@ -88,7 +92,8 @@ function NavSection({
               }
             >
               <span className="text-base leading-none">{item.icon}</span>
-              {!collapsed && item.label}
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {badges?.[item.to] && <span className="shrink-0">{badges[item.to]}</span>}
             </NavLink>
           </li>
         ))}
@@ -101,7 +106,7 @@ export function Sidebar() {
   const { data: user } = useCurrentUser()
   const logout = useLogout()
   const navigate = useNavigate()
-  const { sidebarCollapsed, toggleSidebar } = useUIStore()
+  const { sidebarCollapsed, toggleSidebar, activeAsJob } = useUIStore()
 
   const handleLogout = () => {
     logout.mutate(undefined, {
@@ -151,7 +156,26 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-4">
-        <NavSection label="Schedules" items={SCHEDULE_NAV} collapsed={sidebarCollapsed} />
+        <NavSection
+          label="Schedules"
+          items={SCHEDULE_NAV}
+          collapsed={sidebarCollapsed}
+          badges={activeAsJob ? {
+            '/schedules': (
+              <span
+                className="relative flex h-2.5 w-2.5"
+                title={`Auto-scheduler running: "${activeAsJob.name}"`}
+              >
+                <span
+                  className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                  style={{ background: 'var(--accent)' }}
+                />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5"
+                  style={{ background: 'var(--accent)' }} />
+              </span>
+            ),
+          } : undefined}
+        />
         <NavSection label="Views" items={VIEWS_NAV} collapsed={sidebarCollapsed} />
         <NavSection label="Definitions" items={DEFINITIONS_NAV} collapsed={sidebarCollapsed} />
         {/* Admin section — only rendered for root users */}

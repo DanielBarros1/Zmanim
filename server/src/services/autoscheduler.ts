@@ -136,6 +136,12 @@ async function runJob(input: JobInput): Promise<void> {
       console.log(`[AutoScheduler] Hard teacher availability: ${hardTeacherAvail.size} teacher(s) with INVARIANT restrictions`)
     }
 
+    // Soft-constraint penalty lookup for backtracker value ordering.
+    // Teachers with NON_NEGOTIABLE/IMPORTANT/PREFERRED/FLEXIBLE availability
+    // restrictions will have their unavailable days sorted to the END of the
+    // backtracker's slot list, so the CSP's initial placement naturally avoids them.
+    const softLookup = buildSoftLookup(restrictions)
+
     // ── Expand lessons into individual placement instances ─────────
     // Each lesson with hoursPerWeek=N generates N independent placements.
     const instances = expandLessons(lessons)
@@ -640,7 +646,7 @@ async function runJob(input: JobInput): Promise<void> {
       const shuffledRemaining = fisherYates([...remaining])
       patchJob(input.jobId, { statusMessage: `Restart ${restart + 1}/${input.nRestarts} — backtracking (${remaining.length} lessons)…` })
       const deadline = Date.now() + BACKTRACK_TIMEOUT_MS
-      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart, hardTeacherAvail)
+      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart, hardTeacherAvail, softLookup)
 
       if (!btResult.ok) {
         const reason = btResult.timedOut ? 'timed out' : 'proved infeasible'
@@ -720,6 +726,16 @@ async function runJob(input: JobInput): Promise<void> {
       // that assignRooms() cannot fix because it can only give a room to one lesson).
       let specialRoomConflicts = countSpecialRoomConflicts(entries)
 
+      // ── Simulated annealing cooling schedule ──────────────────
+      // SA is applied to the SOFT score dimension only (when hardCount is unchanged).
+      // This lets local search escape local optima that pure hill-climbing gets stuck in.
+      //
+      // T₀ = 50,000 → P(accept one NON_NEGOTIABLE violation, +100K) ≈ 13% at start.
+      // T_final = 1  → only sub-FLEXIBLE improvements accepted at the very end.
+      // Cooling: geometric over nIterations iterations.
+      const SA_T0 = 50_000
+      const SA_T_FINAL = 1
+
       for (let iter = 0; iter < input.nIterations; iter++) {
         const nonSeeded = entries.filter((e: any) => !e.isSeeded)
         if (nonSeeded.length < 2) break
@@ -771,10 +787,14 @@ async function runJob(input: JobInput): Promise<void> {
         // give a specialized room to one lesson per slot; a conflict is a permanent quality problem.
         if (cSpecialRoomConflicts > specialRoomConflicts) continue
 
-        // Three-level lexicographic acceptance
+        // Simulated-annealing acceptance for the soft-score dimension.
+        // When hardCount is unchanged, SA allows uphill moves with probability
+        // exp(-Δscore / T) where T cools geometrically from SA_T0 to SA_T_FINAL.
+        const T = SA_T0 * Math.pow(SA_T_FINAL / SA_T0, iter / Math.max(input.nIterations, 1))
         const fewerClass = cClassConflicts < classConflicts
         const betterHard = cHard < hardCount
-        const sameHard   = cHard === hardCount && cScore <= score
+        const sameHard   = cHard === hardCount &&
+          (cScore <= score || Math.random() < Math.exp(-(cScore - score) / T))
 
         if (fewerClass || betterHard || sameHard) {
           entries               = candidate
@@ -1225,6 +1245,80 @@ function assignRooms(entries: any[], lessons: any[], rooms: any[]): any[] {
 
 const BACKTRACK_TIMEOUT_MS = 3_000  // 3 s per restart — keeps the event loop free for poll requests
 
+// ─── Soft-constraint value-ordering helpers ───────────────────
+//
+// These are used by the backtracker to sort candidate slots by how many
+// soft constraints they would violate, so the CSP starts from a placement
+// that is already close to respecting teacher availability rather than a
+// purely random one.  This dramatically reduces the NN violation count
+// in the initial state, giving simulated annealing a much shorter path
+// to a high-quality schedule.
+
+/** Per-teacher soft-constraint penalty lookup. */
+interface SoftLookup {
+  teacherDay:     Map<string, Map<string, number>>   // teacherId → day     → weight
+  teacherDaySlot: Map<string, Map<string, number>>   // teacherId → "d:s"   → weight
+  teacherSlot:    Map<string, Map<number,  number>>  // teacherId → slot    → weight
+}
+
+function _addW2(outer: Map<string, Map<string, number>>, k1: string, k2: string, w: number): void {
+  if (!outer.has(k1)) outer.set(k1, new Map())
+  const inner = outer.get(k1)!
+  inner.set(k2, (inner.get(k2) ?? 0) + w)
+}
+function _addWN(outer: Map<string, Map<number, number>>, k1: string, k2: number, w: number): void {
+  if (!outer.has(k1)) outer.set(k1, new Map())
+  const inner = outer.get(k1)!
+  inner.set(k2, (inner.get(k2) ?? 0) + w)
+}
+
+/**
+ * Build a soft-constraint penalty lookup from active restrictions.
+ *
+ * Tier weights: NON_NEGOTIABLE=1000, IMPORTANT=100, PREFERRED=10, FLEXIBLE=1.
+ * INVARIANT restrictions are already hard-rejected in btValid — no weight needed here.
+ *
+ * Covers only teacher availability types (A1/A2/A3) because those are the primary
+ * source of initial NN violations in the backtracker's random starting solution.
+ */
+function buildSoftLookup(restrictions: any[]): SoftLookup {
+  const WEIGHT: Record<string, number> = {
+    NON_NEGOTIABLE: 1000,
+    IMPORTANT:      100,
+    PREFERRED:      10,
+    FLEXIBLE:       1,
+  }
+  const teacherDay     = new Map<string, Map<string, number>>()
+  const teacherDaySlot = new Map<string, Map<string, number>>()
+  const teacherSlot    = new Map<string, Map<number,  number>>()
+
+  for (const r of restrictions) {
+    if (!(r as any).teacherId || !(r as any).isActive) continue
+    const w = WEIGHT[(r as any).tier] ?? 0
+    if (w === 0) continue  // INVARIANT handled separately
+    const p   = (r as any).params as any
+    const tid = (r as any).teacherId as string
+    if      ((r as any).type === 'TEACHER_UNAVAILABLE_DAY'       && p.day)                    _addW2(teacherDay,     tid, p.day,             w)
+    else if ((r as any).type === 'TEACHER_UNAVAILABLE_DAY_SLOT'   && p.day && p.slot != null) _addW2(teacherDaySlot, tid, `${p.day}:${p.slot}`, w)
+    else if ((r as any).type === 'TEACHER_UNAVAILABLE_SLOT'       && p.slot != null)          _addWN(teacherSlot,    tid, p.slot,            w)
+  }
+  return { teacherDay, teacherDaySlot, teacherSlot }
+}
+
+/** Compute the total soft-constraint penalty for placing teacher(s) tids at (day, slot). */
+function slotSoftPenalty(
+  tids: string[], day: string, slot: number,
+  soft: SoftLookup,
+): number {
+  let pen = 0
+  for (const tid of tids) {
+    pen += soft.teacherDay.get(tid)?.get(day)                  ?? 0
+    pen += soft.teacherDaySlot.get(tid)?.get(`${day}:${slot}`) ?? 0
+    pen += soft.teacherSlot.get(tid)?.get(slot)                ?? 0
+  }
+  return pen
+}
+
 /** Count-map occupancy for exact undo during backtracking. */
 interface BacktrackOcc {
   teacherSlot:       Map<string, number>  // "tid:day:slot"    → refcount
@@ -1363,6 +1457,7 @@ function backtrackPhaseB(
   deadline: number,
   restart: number,
   hardAvail: Map<string, HardAvail>,
+  softLookup: SoftLookup,
 ): BtResult {
   // Pre-compute teacher IDs once per instance.
   const order = instances.map(inst => ({
@@ -1378,6 +1473,23 @@ function backtrackPhaseB(
   // shuffle order, giving different exploration paths across restarts.
   order.sort((a, b) => a.validCount - b.validCount)
 
+  // ── Value ordering: per-instance soft-constraint-aware slot lists ──
+  //
+  // Instead of one global shuffle, compute a separate slot ordering per lesson
+  // instance, sorted by soft-constraint penalty (ascending = prefer slots that
+  // don't violate teacher availability).  A small random noise term [0, 0.9)
+  // breaks ties between equal-penalty slots, giving each restart a different
+  // exploration order while always preferring teacher-available days first.
+  //
+  // The noise is < 1.0 (minimum non-zero penalty difference) so it never
+  // re-orders slots that have different penalty scores — only equal-penalty
+  // slots are shuffled.
+  const instanceSlotOrders = order.map(({ tids }) =>
+    allSlots
+      .map(s => ({ ...s, _k: slotSoftPenalty(tids, s.day, s.slot, softLookup) + Math.random() * 0.9 }))
+      .sort((a, b) => a._k - b._k) as Array<{ day: string; slot: number; _k: number }>
+  )
+
   // Clone occupancy so Phase A/A' state is never mutated.
   const occ: BacktrackOcc = {
     teacherSlot:         new Map(initOcc.teacherSlot),
@@ -1391,16 +1503,13 @@ function backtrackPhaseB(
   const placed: any[] = []
   let timedOut = false
 
-  // Per-restart slot order shuffle — explores different paths across restarts.
-  const slotOrder = fisherYates([...allSlots])
-
   function place(idx: number): boolean {
     if (Date.now() > deadline) { timedOut = true; return false }
     if (idx === order.length)  return true   // all instances placed ✓
 
     const { inst, tids } = order[idx]
 
-    for (const { day, slot } of slotOrder) {
+    for (const { day, slot } of instanceSlotOrders[idx]) {
       if (!btValid(inst, day, slot, occ, tids, hardAvail)) continue
 
       btApply(inst, day, slot, occ, tids)
