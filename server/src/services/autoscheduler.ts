@@ -222,11 +222,9 @@ async function runJob(input: JobInput): Promise<void> {
     }
     console.log(`[AutoScheduler] ───────────────────────────────────────`)
 
-    // ── Top-3 candidate tracking ──────────────────────────────────
-    // We keep the three best restarts so the admin can compare them.
-    // Ranking is the same five-level lexicographic criterion used for the
-    // single-best case: invariants → classConflicts → gradeSyncConflicts →
-    // hardCount → score.
+    // ── Best candidate tracking ────────────────────────────────────
+    // We keep only the single best restart to minimise peak memory usage.
+    // Ranking: invariants → classConflicts → gradeSyncConflicts → hardCount → score.
     interface Candidate {
       entries: any[]
       score: number
@@ -235,26 +233,15 @@ async function runJob(input: JobInput): Promise<void> {
       gradeSyncConflicts: number
       invariantCount: number
     }
-    const topCandidates: Candidate[] = []
+    let bestCandidate: Candidate | null = null
 
-    function candidateRank(a: Candidate, b: Candidate): number {
-      if (a.invariantCount      !== b.invariantCount)      return a.invariantCount      - b.invariantCount
-      if (a.classConflicts      !== b.classConflicts)      return a.classConflicts      - b.classConflicts
-      if (a.gradeSyncConflicts  !== b.gradeSyncConflicts)  return a.gradeSyncConflicts  - b.gradeSyncConflicts
-      if (a.hardCount           !== b.hardCount)           return a.hardCount           - b.hardCount
-      return a.score - b.score
+    function isBetterCandidate(a: Candidate, b: Candidate): boolean {
+      if (a.invariantCount     !== b.invariantCount)     return a.invariantCount     < b.invariantCount
+      if (a.classConflicts     !== b.classConflicts)     return a.classConflicts     < b.classConflicts
+      if (a.gradeSyncConflicts !== b.gradeSyncConflicts) return a.gradeSyncConflicts < b.gradeSyncConflicts
+      if (a.hardCount          !== b.hardCount)          return a.hardCount          < b.hardCount
+      return a.score < b.score
     }
-
-    function insertTopCandidate(c: Candidate): void {
-      // Always insert if fewer than 3; otherwise only if better than the current worst
-      if (topCandidates.length >= 3 && candidateRank(c, topCandidates[topCandidates.length - 1]) >= 0) return
-      topCandidates.push(c)
-      topCandidates.sort(candidateRank)
-      if (topCandidates.length > 3) topCandidates.pop()
-    }
-
-    // Convenience accessors for diagnostic logging (derived from the current best)
-    const bestStats = () => topCandidates[0] ?? { invariantCount: Infinity, classConflicts: Infinity, gradeSyncConflicts: Infinity, hardCount: Infinity, score: Infinity }
 
     // ── Seed validation (Gate S): surface hard D-invariants in the seed ──
     // Seeded entries are user-verified fixed anchors.  Violations within them are
@@ -935,10 +922,11 @@ async function runJob(input: JobInput): Promise<void> {
       }
 
       // Insert this restart's result into the top-3 list
-      insertTopCandidate({ entries, score, hardCount, classConflicts, gradeSyncConflicts, invariantCount })
+      const c: Candidate = { entries, score, hardCount, classConflicts, gradeSyncConflicts, invariantCount }
+      if (!bestCandidate || isBetterCandidate(c, bestCandidate)) bestCandidate = c
 
       // Per-restart diagnostic log
-      const b = bestStats()
+      const b = bestCandidate
       console.log(
         `[AutoScheduler] Restart ${String(restart + 1).padStart(2)}/${input.nRestarts}` +
         ` | inv=${invariantCount}` +
@@ -946,8 +934,7 @@ async function runJob(input: JobInput): Promise<void> {
         ` | gradeSync=${gradeSyncConflicts}` +
         ` | nonNeg=${evalResult.counts.nonNegotiable}` +
         ` | score=${score}` +
-        ` | best(inv=${b.invariantCount} cc=${b.classConflicts} gs=${b.gradeSyncConflicts} h=${b.hardCount} s=${b.score})` +
-        ` | top=${topCandidates.length}`
+        ` | best(inv=${b.invariantCount} cc=${b.classConflicts} gs=${b.gradeSyncConflicts} h=${b.hardCount} s=${b.score})`
       )
 
       // Update progress, yield to event loop so the poll request can read the new state.
@@ -955,9 +942,11 @@ async function runJob(input: JobInput): Promise<void> {
       await new Promise<void>(resolve => setImmediate(resolve))
     }
 
-    const b0 = bestStats()
     console.log(`[AutoScheduler] ─── DONE ───────────────────────────────`)
-    console.log(`[AutoScheduler] Top candidates: ${topCandidates.length} | best inv=${b0.invariantCount} cc=${b0.classConflicts} gs=${b0.gradeSyncConflicts} h=${b0.hardCount} s=${b0.score}`)
+    if (bestCandidate) {
+      const b0 = bestCandidate
+      console.log(`[AutoScheduler] Best: inv=${b0.invariantCount} cc=${b0.classConflicts} gs=${b0.gradeSyncConflicts} h=${b0.hardCount} s=${b0.score}`)
+    }
     console.log(`[AutoScheduler] ═══════════════════════════════════════\n`)
 
     // ── Gate 1: all restarts were skipped — backtracking never found a valid start ──
@@ -985,166 +974,116 @@ async function runJob(input: JobInput): Promise<void> {
       return
     }
 
-    // ── Phase 1: dedup → assign rooms → Gate 2 → Gate 3 → full eval ──
-    // We evaluate ALL candidates before persisting any so we can rank them by
-    // their ACTUAL quality (full post-room evaluation) rather than the local-search
-    // score (which skips room checks).  Only after sorting do we persist in order
-    // so the schedule names ("Option 1 — Best", "Option 2", …) are accurate.
-
+    // ── Finalization: dedup → assign rooms → Gate 3 → Gate 2 → full eval → save ──
     const lessonMap = new Map(lessons.map((l: any) => [l.id, l]))
-    let nGate3Failures = 0  // Gate 3: unplaced-lesson failures across all candidates
+    patchJob(input.jobId, { statusMessage: 'Finalizing…', progress: 97 })
 
-    interface PreSaved {
-      withRooms: any[]
-      fullEval:  ReturnType<typeof evaluate>
-    }
-    const preSaved: PreSaved[] = []
+    const deduped   = deduplicateLessonSlots(bestCandidate!.entries, days, slotsPerDay)
+    const withRooms = assignRooms(deduped, lessons, rooms)
+    const enriched  = withRooms.map((e: any) => ({
+      ...e,
+      lesson:    e.lesson ?? lessonMap.get(e.lessonId),
+      overrides: e.overrides ?? [],
+    })).filter((e: any) => e.lesson)
 
-    for (let i = 0; i < topCandidates.length; i++) {
-      const candidate = topCandidates[i]
-      patchJob(input.jobId, { statusMessage: `Evaluating candidate ${i + 1}…`, progress: 97 })
-
-      const deduped  = deduplicateLessonSlots(candidate.entries, days, slotsPerDay)
-      const withRooms = assignRooms(deduped, lessons, rooms)
-
-      const enriched = withRooms.map((e: any) => ({
-        ...e,
-        lesson:    e.lesson ?? lessonMap.get(e.lessonId),
-        overrides: e.overrides ?? [],
-      })).filter((e: any) => e.lesson)
-
-      // ── Gate 3: all lessons must have all hours placed ──────────────
-      // Count entries per lesson in the enriched list and verify each lesson
-      // has exactly hoursPerWeek entries.  Partial placements are rejected here
-      // even if the invariant check (Gate 2) would pass — an incomplete schedule
-      // is never acceptable output regardless of violation counts.
-      {
-        const placedCounts = new Map<string, number>()
-        for (const e of enriched) {
-          placedCounts.set(e.lessonId, (placedCounts.get(e.lessonId) ?? 0) + 1)
-        }
-        const missingLessons: string[] = []
-        for (const l of lessons) {
-          const actual   = placedCounts.get(l.id) ?? 0
-          const expected = l.hoursPerWeek
-          if (actual < expected) {
-            const name = (l as any).subject?.name ?? l.id.slice(-6)
-            missingLessons.push(`"${name}" (${actual}/${expected} hrs)`)
-          }
-        }
-        if (missingLessons.length > 0) {
-          const preview = missingLessons.slice(0, 5).join(', ') + (missingLessons.length > 5 ? ` +${missingLessons.length - 5} more` : '')
-          console.warn(`[AutoScheduler] Candidate ${i + 1} failed Gate 3 (unplaced lessons): ${preview} — skipping`)
-          nGate3Failures++
-          continue
+    // ── Gate 3: all lessons must have all hours placed ──────────────
+    {
+      const placedCounts = new Map<string, number>()
+      for (const e of enriched) {
+        placedCounts.set(e.lessonId, (placedCounts.get(e.lessonId) ?? 0) + 1)
+      }
+      const missingLessons: string[] = []
+      for (const l of lessons) {
+        const actual   = placedCounts.get(l.id) ?? 0
+        const expected = l.hoursPerWeek
+        if (actual < expected) {
+          const name = (l as any).subject?.name ?? l.id.slice(-6)
+          missingLessons.push(`"${name}" (${actual}/${expected} hrs)`)
         }
       }
-
-      // Gate 2: only true invariants (teacher/class double-booking etc.) block here.
-      // Violations where ALL affected entries are seeded are excluded — they represent
-      // user-accepted conflicts in the manually-verified seed and cannot be fixed by the AS.
-      const gateEval = evaluate({
-        entries: enriched as any, lessons: lessons as any,
-        restrictions: [], config: evalConfig, overrides: [],
-      })
-      const gate2SeededIds = new Set(enriched.filter((e: any) => e.isSeeded).map((e: any) => e.id))
-      const gate2Blocked = gateEval.violations.filter(
-        (v: any) => v.tier === 'INVARIANT' && !v.isOverridden && !isSeededOnlyViolation(v, gate2SeededIds)
-      )
-      if (gate2Blocked.length > 0) {
-        const breakdown = gate2Blocked
-          .reduce((m: Map<string,number>, v: any) => {
-            const t = String(v.restrictionType)
-            m.set(t, (m.get(t) ?? 0) + 1)
-            return m
-          }, new Map<string,number>())
-        console.warn(`[AutoScheduler] Candidate ${i + 1} failed Gate 2 (${[...breakdown.entries()].map(([t,n]) => `${t}×${n}`).join(', ')}) — skipping`)
-        continue
+      if (missingLessons.length > 0) {
+        const preview = missingLessons.slice(0, 5).join(', ') + (missingLessons.length > 5 ? ` +${missingLessons.length - 5} more` : '')
+        console.warn(`[AutoScheduler] Failed Gate 3 (unplaced lessons): ${preview}`)
+        const totalSlots = slotsPerDay * days.length
+        jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100,
+          error: `The auto-scheduler could not place all lessons. ` +
+            `This usually means total lesson hours for one or more classes exceed the available ` +
+            `slot budget (${slotsPerDay} slots/day × ${days.length} days = ${totalSlots} slots/class). ` +
+            `Fix: reduce lesson hours per class, increase "Slots per day" in School Config, ` +
+            `or add more working days.`,
+        })
+        return
       }
-      if (gateEval.counts.invariant > gate2Blocked.length) {
-        console.log(`[AutoScheduler] Candidate ${i + 1} Gate 2: ${gateEval.counts.invariant - gate2Blocked.length} seeded-only violation(s) excluded`)
-      }
-
-      const fullEval = evaluate({
-        entries: enriched as any, lessons: lessons as any,
-        restrictions: restrictions as any, config: evalConfig, overrides: [],
-      })
-      preSaved.push({ withRooms, fullEval })
     }
 
-    // ── Phase 2: sort by actual quality, then persist in ranked order ──
-    // Priority: fewest NON_NEGOTIABLE → fewest IMPORTANT → lowest total score.
-    // This ensures the "Best" label reflects post-room reality, not local-search score.
-    preSaved.sort((a, b) => {
-      const ac = a.fullEval.counts, bc = b.fullEval.counts
-      if (ac.nonNegotiable !== bc.nonNegotiable) return ac.nonNegotiable - bc.nonNegotiable
-      if (ac.important     !== bc.important)     return ac.important     - bc.important
-      return a.fullEval.score - b.fullEval.score
+    // ── Gate 2: only AS-introduced invariant violations block here ──
+    // Seeded-only violations are excluded (user-accepted).
+    const gateEval = evaluate({
+      entries: enriched as any, lessons: lessons as any,
+      restrictions: [], config: evalConfig, overrides: [],
     })
-
-    const optionLabels    = ['Option 1 — Best', 'Option 2', 'Option 3']
-    const savedCandidates: CandidateResult[] = []
-
-    for (let i = 0; i < preSaved.length; i++) {
-      const { withRooms, fullEval } = preSaved[i]
-      patchJob(input.jobId, { statusMessage: `Saving ${optionLabels[i]}…`, progress: 98 + i })
-
-      const scheduleName = `${input.name} — ${optionLabels[i]}`
-      const schedule = await prisma.schedule.create({
-        data: {
-          name:  scheduleName,
-          state: 'DRAFT',
-          entries: {
-            create: withRooms.map((e: any) => ({
-              lessonId: e.lessonId,
-              day:      e.day,
-              slot:     e.slot,
-              roomId:   e.roomId  ?? null,
-              roomId2:  e.roomId2 ?? null,
-              isSeeded: e.isSeeded ?? false,
-            })),
-          },
-        },
-      })
-
-      savedCandidates.push({
-        scheduleId: schedule.id,
-        name:       scheduleName,
-        score:      fullEval.score,
-        violations: {
-          total:         fullEval.counts.total,
-          nonNegotiable: fullEval.counts.nonNegotiable,
-          important:     fullEval.counts.important,
-          preferred:     fullEval.counts.preferred,
-          flexible:      fullEval.counts.flexible,
-        },
-      })
-      console.log(`[AutoScheduler] Saved ${scheduleName}: nonNeg=${fullEval.counts.nonNegotiable} imp=${fullEval.counts.important} score=${fullEval.score}`)
-    }
-
-    if (savedCandidates.length === 0) {
-      const totalSlots = slotsPerDay * days.length
-      let error: string
-      if (nGate3Failures > 0) {
-        error =
-          `The auto-scheduler could not place all lessons in any of the ${topCandidates.length} ` +
-          `candidate schedule${topCandidates.length !== 1 ? 's' : ''}. ` +
-          `This usually means the total lesson hours for one or more classes exceed the available ` +
-          `slot budget (${slotsPerDay} slots/day × ${days.length} days = ${totalSlots} slots/class). ` +
-          `Fix: reduce lesson hours per class, increase "Slots per day" in School Config, ` +
-          `or add more working days.`
-      } else {
-        error =
-          `All candidate schedules had unresolvable scheduling conflicts after room assignment ` +
+    const gate2SeededIds = new Set(enriched.filter((e: any) => e.isSeeded).map((e: any) => e.id))
+    const gate2Blocked = gateEval.violations.filter(
+      (v: any) => v.tier === 'INVARIANT' && !v.isOverridden && !isSeededOnlyViolation(v, gate2SeededIds)
+    )
+    if (gate2Blocked.length > 0) {
+      const breakdown = gate2Blocked
+        .reduce((m: Map<string,number>, v: any) => {
+          const t = String(v.restrictionType); m.set(t, (m.get(t) ?? 0) + 1); return m
+        }, new Map<string,number>())
+      const detail = [...breakdown.entries()].map(([t,n]) => `${t}×${n}`).join(', ')
+      console.warn(`[AutoScheduler] Failed Gate 2 (${detail})`)
+      jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100,
+        error: `All candidate schedules had unresolvable scheduling conflicts after room assignment ` +
           `(teacher or class double-booking). This is usually caused by group lessons (Math/English) ` +
           `having too few available time slots due to INVARIANT teacher restrictions. ` +
           `Try: (1) reducing INVARIANT availability blocks in Restrictions → Teachers, ` +
           `(2) increasing "Slots per day" in School Config, ` +
-          `(3) running with more restarts.`
-      }
-      jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100, error })
+          `(3) running with more restarts.`,
+      })
       return
     }
+    if (gateEval.counts.invariant > gate2Blocked.length) {
+      console.log(`[AutoScheduler] Gate 2: ${gateEval.counts.invariant - gate2Blocked.length} seeded-only violation(s) excluded`)
+    }
+
+    const fullEval = evaluate({
+      entries: enriched as any, lessons: lessons as any,
+      restrictions: restrictions as any, config: evalConfig, overrides: [],
+    })
+
+    patchJob(input.jobId, { statusMessage: 'Saving schedule…', progress: 99 })
+    const schedule = await prisma.schedule.create({
+      data: {
+        name:  input.name,
+        state: 'DRAFT',
+        entries: {
+          create: withRooms.map((e: any) => ({
+            lessonId: e.lessonId,
+            day:      e.day,
+            slot:     e.slot,
+            roomId:   e.roomId  ?? null,
+            roomId2:  e.roomId2 ?? null,
+            isSeeded: e.isSeeded ?? false,
+          })),
+        },
+      },
+    })
+    console.log(`[AutoScheduler] Saved "${input.name}": nonNeg=${fullEval.counts.nonNegotiable} imp=${fullEval.counts.important} score=${fullEval.score}`)
+
+    const savedCandidate: CandidateResult = {
+      scheduleId: schedule.id,
+      name:       input.name,
+      score:      fullEval.score,
+      violations: {
+        total:         fullEval.counts.total,
+        nonNegotiable: fullEval.counts.nonNegotiable,
+        important:     fullEval.counts.important,
+        preferred:     fullEval.counts.preferred,
+        flexible:      fullEval.counts.flexible,
+      },
+    }
+    const savedCandidates = [savedCandidate]
 
     jobs.set(input.jobId, {
       jobId:      input.jobId,

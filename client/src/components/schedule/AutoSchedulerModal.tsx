@@ -508,20 +508,16 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
 
         if (status.status === 'DONE' && status.candidates && status.candidates.length > 0) {
           clearInterval(pollRef.current!)
-          setCandidates(status.candidates)
-          // Pre-check all candidates — admin can uncheck the ones they don't want
-          setCheckedIds(new Set(status.candidates.map(c => c.scheduleId)))
-          setUiState('selecting')
+          // Single best result — navigate straight to it
+          const best = status.candidates[0]
+          setReviewMode(true)
+          navigate(`/schedules/${best.scheduleId}`)
+          onClose()
         } else if (status.status === 'DONE' && status.scheduleId) {
-          // Fallback for single-candidate response
           clearInterval(pollRef.current!)
-          setUiState('selecting')
-          setCandidates([{
-            scheduleId: status.scheduleId,
-            name,
-            score: 0,
-            violations: { total: 0, nonNegotiable: 0, important: 0, preferred: 0, flexible: 0 },
-          }])
+          setReviewMode(true)
+          navigate(`/schedules/${status.scheduleId}`)
+          onClose()
         } else if (status.status === 'ERROR') {
           clearInterval(pollRef.current!)
           setUiState('error')
