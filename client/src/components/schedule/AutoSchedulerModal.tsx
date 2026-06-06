@@ -738,6 +738,12 @@ export function AutoSchedulerModal({ open, onClose }: AutoSchedulerModalProps) {
                 <p>1. Go to <strong>Lessons</strong> and reduce hours for the red classes shown above.</p>
                 <p>2. Or increase <strong>Slots per day</strong> in School Config.</p>
               </>
+            ) : errorMsg.includes('INVARIANT') || errorMsg.includes('unresolvable') ? (
+              <>
+                <p>1. Go to <strong>Restrictions → Teachers</strong> and reduce ⛔ Invariant availability blocks — some group lessons have nowhere valid to go.</p>
+                <p>2. Or increase <strong>Slots per day</strong> in School Config to create more room.</p>
+                <p>3. Or <strong>run with more restarts</strong> to find a lucky configuration.</p>
+              </>
             ) : (
               <>
                 <p>1. <strong>Run with more restarts</strong> — the search may need more time (try 2–3×).</p>

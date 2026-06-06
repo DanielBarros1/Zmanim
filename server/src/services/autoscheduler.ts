@@ -661,6 +661,27 @@ async function runJob(input: JobInput): Promise<void> {
 
       entries.push(...btResult.entries)
 
+      // ── Phase A duplicate guard ────────────────────────────────────
+      // Phase A uses a Math.min(i, last) fallback when INVARIANT restrictions
+      // leave fewer available slots than a group lesson needs.  This stacks
+      // multiple instances at the same (lessonId, day, slot), which local search
+      // cannot fix (Guard 1 only rejects candidates that ADD new duplicates, not
+      // existing ones).  deduplicateLessonSlots would later relocate them to
+      // arbitrary slots without checking teacher/class occupancy, producing D1/D2
+      // violations that cause Gate 2 to reject all candidates.
+      //
+      // Detect this condition early and skip the restart.  Counting as a "timed out"
+      // restart ensures the user gets a meaningful error message about tight
+      // constraints rather than the opaque "algorithmic bug" text.
+      if (hasDuplicateLessonSlots(entries)) {
+        console.log(
+          `[AutoScheduler] Restart ${String(restart + 1).padStart(2)}: Phase A created duplicate` +
+          ` lesson placements (insufficient valid slots after INVARIANT restrictions) — skipping`,
+        )
+        nSkippedRestarts++
+        continue
+      }
+
       // Sync the Phase-A/A' occupancy Sets with the backtracking result so
       // local search (which uses the Sets directly) sees a consistent state.
       for (const e of btResult.entries) {
@@ -1031,8 +1052,12 @@ async function runJob(input: JobInput): Promise<void> {
           `or add more working days.`
       } else {
         error =
-          `All candidate schedules failed the post-room-assignment invariant check. ` +
-          `This is an algorithmic bug — please report it.`
+          `All candidate schedules had unresolvable scheduling conflicts after room assignment ` +
+          `(teacher or class double-booking). This is usually caused by group lessons (Math/English) ` +
+          `having too few available time slots due to INVARIANT teacher restrictions. ` +
+          `Try: (1) reducing INVARIANT availability blocks in Restrictions → Teachers, ` +
+          `(2) increasing "Slots per day" in School Config, ` +
+          `(3) running with more restarts.`
       }
       jobs.set(input.jobId, { jobId: input.jobId, status: 'ERROR', progress: 100, error })
       return
