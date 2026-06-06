@@ -114,6 +114,28 @@ async function runJob(input: JobInput): Promise<void> {
       subjectTwicePerDayAllowed: (config as any)?.subjectTwicePerDayAllowed ?? [],
     }
 
+    // ── Hard teacher availability ──────────────────────────────────
+    // INVARIANT-tier teacher restrictions represent physical impossibilities
+    // (e.g. teacher does not work on Mondays).  The backtracker and Phase A/A'
+    // placement treat these as absolutely blocked slots — they are never relaxed
+    // even in the deepest fallback tiers.
+    const hardTeacherAvail = new Map<string, HardAvail>()
+    for (const r of restrictions) {
+      if ((r as any).tier !== 'INVARIANT' || !(r as any).teacherId || !(r as any).isActive) continue
+      const p = (r as any).params as any
+      const tid = (r as any).teacherId as string
+      if (!hardTeacherAvail.has(tid)) {
+        hardTeacherAvail.set(tid, { days: new Set(), daySlots: new Set(), slots: new Set() })
+      }
+      const ha = hardTeacherAvail.get(tid)!
+      if      ((r as any).type === 'TEACHER_UNAVAILABLE_DAY'       && p.day)                    ha.days.add(p.day)
+      else if ((r as any).type === 'TEACHER_UNAVAILABLE_DAY_SLOT'   && p.day && p.slot != null) ha.daySlots.add(`${p.day}:${p.slot}`)
+      else if ((r as any).type === 'TEACHER_UNAVAILABLE_SLOT'       && p.slot != null)          ha.slots.add(p.slot)
+    }
+    if (hardTeacherAvail.size > 0) {
+      console.log(`[AutoScheduler] Hard teacher availability: ${hardTeacherAvail.size} teacher(s) with INVARIANT restrictions`)
+    }
+
     // ── Expand lessons into individual placement instances ─────────
     // Each lesson with hoursPerWeek=N generates N independent placements.
     const instances = expandLessons(lessons)
@@ -342,6 +364,8 @@ async function runJob(input: JobInput): Promise<void> {
           if (chosenSlots.length >= requiredSlots) break
           const key = `${day}:${slot}`
           if (chosenKeys.has(key)) continue
+          // Hard teacher unavailability — never relaxed regardless of fallback tier
+          if (groupTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
 
           // All group teachers must be free
           if (groupTeachers.some(tid => occupiedTeacher.has(`${tid}:${day}:${slot}`))) continue
@@ -365,6 +389,7 @@ async function runJob(input: JobInput): Promise<void> {
             if (chosenSlots.length >= requiredSlots) break
             const key = `${day}:${slot}`
             if (chosenKeys.has(key)) continue
+            if (groupTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
             if (groupClasses.some(cid => subjectOnClassDay.has(`${groupSubjectId}:${cid}:${day}`))) continue
             if (groupSpecialRoomId && occupiedSpecializedRoom.has(`${groupSpecialRoomId}:${day}:${slot}`)) continue
             chosenSlots.push({ day, slot })
@@ -379,18 +404,22 @@ async function runJob(input: JobInput): Promise<void> {
             if (chosenSlots.length >= requiredSlots) break
             const key = `${day}:${slot}`
             if (chosenKeys.has(key)) continue
+            if (groupTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
             if (groupSpecialRoomId && occupiedSpecializedRoom.has(`${groupSpecialRoomId}:${day}:${slot}`)) continue
             chosenSlots.push({ day, slot })
             chosenKeys.add(key)
           }
         }
 
-        // Fallback tier 3 (absolute last resort): any unused slot.
+        // Fallback tier 3 (absolute last resort): any unused slot except hard-unavailable ones.
         if (chosenSlots.length < requiredSlots) {
           for (const { day, slot } of candidateSlots) {
             if (chosenSlots.length >= requiredSlots) break
             const key = `${day}:${slot}`
-            if (!chosenKeys.has(key)) { chosenSlots.push({ day, slot }); chosenKeys.add(key) }
+            if (chosenKeys.has(key)) continue
+            if (groupTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
+            chosenSlots.push({ day, slot })
+            chosenKeys.add(key)
           }
         }
 
@@ -493,6 +522,8 @@ async function runJob(input: JobInput): Promise<void> {
           if (chosenSlots.length >= requiredSlots) break
           const slotKey = `${day}:${slot}`
           if (chosenKeys.has(slotKey)) continue
+          // Hard teacher unavailability — never relaxed regardless of fallback tier
+          if (syncTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
           if (syncTeachers.some(tid => occupiedTeacher.has(`${tid}:${day}:${slot}`))) continue
           if (syncClasses.some(cid => occupiedClass.has(`${cid}:${day}:${slot}`))) continue
           // No same subject on the same day for any sync class (D7)
@@ -509,6 +540,7 @@ async function runJob(input: JobInput): Promise<void> {
             if (chosenSlots.length >= requiredSlots) break
             const slotKey = `${day}:${slot}`
             if (chosenKeys.has(slotKey)) continue
+            if (syncTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
             if (syncClasses.some(cid => subjectOnClassDay.has(`${syncSubjectId}:${cid}:${day}`))) continue
             if (syncSpecialRoomId && occupiedSpecializedRoom.has(`${syncSpecialRoomId}:${day}:${slot}`)) continue
             chosenSlots.push({ day, slot })
@@ -522,18 +554,22 @@ async function runJob(input: JobInput): Promise<void> {
             if (chosenSlots.length >= requiredSlots) break
             const slotKey = `${day}:${slot}`
             if (chosenKeys.has(slotKey)) continue
+            if (syncTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
             if (syncSpecialRoomId && occupiedSpecializedRoom.has(`${syncSpecialRoomId}:${day}:${slot}`)) continue
             chosenSlots.push({ day, slot })
             chosenKeys.add(slotKey)
           }
         }
 
-        // Fallback tier 3 (absolute last resort): any unused slot.
+        // Fallback tier 3 (absolute last resort): any unused slot except hard-unavailable ones.
         if (chosenSlots.length < requiredSlots) {
           for (const { day, slot } of candidateSlots) {
             if (chosenSlots.length >= requiredSlots) break
             const slotKey = `${day}:${slot}`
-            if (!chosenKeys.has(slotKey)) { chosenSlots.push({ day, slot }); chosenKeys.add(slotKey) }
+            if (chosenKeys.has(slotKey)) continue
+            if (syncTeachers.some(tid => isHardUnavailable(tid, day, slot, hardTeacherAvail))) continue
+            chosenSlots.push({ day, slot })
+            chosenKeys.add(slotKey)
           }
         }
 
@@ -604,7 +640,7 @@ async function runJob(input: JobInput): Promise<void> {
       const shuffledRemaining = fisherYates([...remaining])
       patchJob(input.jobId, { statusMessage: `Restart ${restart + 1}/${input.nRestarts} — backtracking (${remaining.length} lessons)…` })
       const deadline = Date.now() + BACKTRACK_TIMEOUT_MS
-      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart)
+      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart, hardTeacherAvail)
 
       if (!btResult.ok) {
         const reason = btResult.timedOut ? 'timed out' : 'proved infeasible'
@@ -680,6 +716,9 @@ async function runJob(input: JobInput): Promise<void> {
       let hardCount         = compositeHard(evalResult)
       let classConflicts    = countClassConflicts(evalResult)
       let gradeSyncConflicts = countGradeSyncConflicts(evalResult)
+      // Guard 5 baseline: specialized-room slot conflicts (pre-room-assignment conflicts
+      // that assignRooms() cannot fix because it can only give a room to one lesson).
+      let specialRoomConflicts = countSpecialRoomConflicts(entries)
 
       for (let iter = 0; iter < input.nIterations; iter++) {
         const nonSeeded = entries.filter((e: any) => !e.isSeeded)
@@ -722,11 +761,15 @@ async function runJob(input: JobInput): Promise<void> {
         const cScore               = cResult.score
         const cClassConflicts      = countClassConflicts(cResult)
         const cGradeSyncConflicts  = countGradeSyncConflicts(cResult)
+        const cSpecialRoomConflicts = countSpecialRoomConflicts(candidate)
 
         // Guard 3: class conflicts must never increase — not even if other violations improve
         if (cClassConflicts > classConflicts) continue
         // Guard 4: grade-sync violations must never increase — sync set up by Phase A' is preserved
         if (cGradeSyncConflicts > gradeSyncConflicts) continue
+        // Guard 5: specialized-room slot conflicts must never increase — assignRooms() can only
+        // give a specialized room to one lesson per slot; a conflict is a permanent quality problem.
+        if (cSpecialRoomConflicts > specialRoomConflicts) continue
 
         // Three-level lexicographic acceptance
         const fewerClass = cClassConflicts < classConflicts
@@ -734,12 +777,13 @@ async function runJob(input: JobInput): Promise<void> {
         const sameHard   = cHard === hardCount && cScore <= score
 
         if (fewerClass || betterHard || sameHard) {
-          entries             = candidate
-          score               = cScore
-          hardCount           = cHard
-          classConflicts      = cClassConflicts
-          gradeSyncConflicts  = cGradeSyncConflicts
-          evalResult          = cResult   // keep evalResult current so post-loop checks are accurate
+          entries               = candidate
+          score                 = cScore
+          hardCount             = cHard
+          classConflicts        = cClassConflicts
+          gradeSyncConflicts    = cGradeSyncConflicts
+          specialRoomConflicts  = cSpecialRoomConflicts
+          evalResult            = cResult   // keep evalResult current so post-loop checks are accurate
         }
       }
 
@@ -1191,6 +1235,41 @@ interface BacktrackOcc {
   groupClassSlot:    Set<string>          // Phase-A slots — immutable during backtrack
 }
 
+/** Hard teacher unavailability derived from INVARIANT-tier restrictions. */
+interface HardAvail {
+  days:     Set<string>   // Days teacher cannot work (any slot)
+  daySlots: Set<string>   // "Day:slot" pairs teacher cannot work
+  slots:    Set<number>   // Slot numbers teacher cannot teach on any day
+}
+
+/** Returns true when teacher tid is hard-unavailable (INVARIANT tier) at (day, slot). */
+function isHardUnavailable(
+  tid: string, day: string, slot: number,
+  hardAvail: Map<string, HardAvail>,
+): boolean {
+  const ha = hardAvail.get(tid)
+  if (!ha) return false
+  return ha.days.has(day) || ha.daySlots.has(`${day}:${slot}`) || ha.slots.has(slot)
+}
+
+/**
+ * Guard 5 helper: counts entries where two lessons needing the same specializedRoom
+ * land at the same (day, slot).  Used during local search to prevent swaps from
+ * re-introducing room conflicts that assignRooms() would fail to resolve.
+ */
+function countSpecialRoomConflicts(entries: any[]): number {
+  const counts = new Map<string, number>()
+  for (const e of entries) {
+    const rid = e.lesson?.subject?.specializedRoomId
+    if (!rid) continue
+    const k = `${rid}:${e.day}:${e.slot}`
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  let n = 0
+  for (const cnt of counts.values()) if (cnt > 1) n += cnt - 1
+  return n
+}
+
 function occIncr(m: Map<string, number>, k: string): void {
   m.set(k, (m.get(k) ?? 0) + 1)
 }
@@ -1205,10 +1284,14 @@ function occHas(m: Map<string, number>, k: string): boolean {
 function btValid(
   inst: any, day: string, slot: number,
   occ: BacktrackOcc, tids: string[],
+  hardAvail: Map<string, HardAvail>,
 ): boolean {
   if (occHas(occ.lessonAtSlot, `${inst.lessonId}:${day}:${slot}`)) return false
-  for (const tid of tids)
+  for (const tid of tids) {
     if (occHas(occ.teacherSlot, `${tid}:${day}:${slot}`)) return false
+    // Hard teacher unavailability (INVARIANT tier) — never relaxed
+    if (isHardUnavailable(tid, day, slot, hardAvail)) return false
+  }
   for (const cls of inst.lesson.classes) {
     if (occHas(occ.classSlot,   `${cls.id}:${day}:${slot}`)) return false
     if (occ.groupClassSlot.has( `${cls.id}:${day}:${slot}`)) return false
@@ -1245,9 +1328,10 @@ function btUndo(inst: any, day: string, slot: number, occ: BacktrackOcc, tids: s
 function btCountValid(
   inst: any, occ: BacktrackOcc,
   slots: Array<{ day: string; slot: number }>, tids: string[],
+  hardAvail: Map<string, HardAvail>,
 ): number {
   let n = 0
-  for (const { day, slot } of slots) if (btValid(inst, day, slot, occ, tids)) n++
+  for (const { day, slot } of slots) if (btValid(inst, day, slot, occ, tids, hardAvail)) n++
   return n
 }
 
@@ -1278,6 +1362,7 @@ function backtrackPhaseB(
   allSlots: Array<{ day: string; slot: number }>,
   deadline: number,
   restart: number,
+  hardAvail: Map<string, HardAvail>,
 ): BtResult {
   // Pre-compute teacher IDs once per instance.
   const order = instances.map(inst => ({
@@ -1287,7 +1372,7 @@ function backtrackPhaseB(
   }))
   // Compute valid-slot counts against initOcc for MRV ordering.
   for (const item of order) {
-    item.validCount = btCountValid(item.inst, initOcc, allSlots, item.tids)
+    item.validCount = btCountValid(item.inst, initOcc, allSlots, item.tids, hardAvail)
   }
   // MRV: fewest valid slots first.  Equal-count ties preserve the caller's
   // shuffle order, giving different exploration paths across restarts.
@@ -1316,7 +1401,7 @@ function backtrackPhaseB(
     const { inst, tids } = order[idx]
 
     for (const { day, slot } of slotOrder) {
-      if (!btValid(inst, day, slot, occ, tids)) continue
+      if (!btValid(inst, day, slot, occ, tids, hardAvail)) continue
 
       btApply(inst, day, slot, occ, tids)
       placed.push({
@@ -1330,7 +1415,7 @@ function backtrackPhaseB(
       // Forward check: every remaining instance must still have ≥ 1 valid slot.
       let feasible = true
       for (let i = idx + 1; i < order.length; i++) {
-        if (btCountValid(order[i].inst, occ, allSlots, order[i].tids) === 0) {
+        if (btCountValid(order[i].inst, occ, allSlots, order[i].tids, hardAvail) === 0) {
           feasible = false; break
         }
       }

@@ -34,7 +34,10 @@ restrictionsRouter.get('/', requireAuth, async (req, res, next) => {
 
 const restrictionSchema = z.object({
   type: z.string(),   // RestrictionType enum — validated as string (Zod doesn't know Prisma enums)
-  tier: z.enum(['NON_NEGOTIABLE', 'IMPORTANT', 'PREFERRED', 'FLEXIBLE']),
+  // INVARIANT is allowed for teacher availability types (physical impossibility).
+  // All other types default to NON_NEGOTIABLE at most — INVARIANT is excluded by the UI
+  // for non-availability restrictions.
+  tier: z.enum(['INVARIANT', 'NON_NEGOTIABLE', 'IMPORTANT', 'PREFERRED', 'FLEXIBLE']),
   teacherId: z.string().uuid().nullable().optional(),
   classId: z.string().uuid().nullable().optional(),
   gradeId: z.string().uuid().nullable().optional(),

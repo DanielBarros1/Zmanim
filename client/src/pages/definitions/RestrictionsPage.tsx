@@ -817,12 +817,16 @@ function TeachersTab({
                     key={r.id}
                     className={['flex items-center gap-2 px-1 py-1.5 rounded group', !r.isActive ? 'opacity-40' : ''].join(' ')}
                   >
-                    {/* Tier dot */}
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ background: TIER_DOT[r.tier] }}
-                      title={TIER_LABEL[r.tier]}
-                    />
+                    {/* Tier indicator — ⛔ for invariant, coloured dot for others */}
+                    {r.tier === RestrictionTier.INVARIANT ? (
+                      <span className="shrink-0 text-[11px]" title="Invariant — scheduler never places a lesson here">⛔</span>
+                    ) : (
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: TIER_DOT[r.tier] }}
+                        title={TIER_LABEL[r.tier]}
+                      />
+                    )}
                     <span className="flex-1 text-[12px] text-[var(--text-2)] truncate">
                       {resolveLabel(r, maps, true)}
                     </span>

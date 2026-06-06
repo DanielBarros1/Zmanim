@@ -25,16 +25,21 @@ const DAY_LABEL: Record<Day, string> = {
   [Day.THURSDAY]: 'Thu',
 }
 
-const TIER_CONFIG: Record<RestrictionTier, { bg: string; text: string; border: string; abbr: string; label: string }> = {
-  [RestrictionTier.INVARIANT]:      { bg: '#b91c1c', text: '#fff', border: '#b91c1c', abbr: 'INV', label: 'Invariant' },
-  [RestrictionTier.NON_NEGOTIABLE]: { bg: '#ef4444', text: '#fff', border: '#ef4444', abbr: 'NN',  label: '🔴 Non-Negotiable' },
-  [RestrictionTier.IMPORTANT]:      { bg: '#f59e0b', text: '#fff', border: '#f59e0b', abbr: 'IMP', label: '🟡 Important' },
-  [RestrictionTier.PREFERRED]:      { bg: '#22c55e', text: '#fff', border: '#22c55e', abbr: 'PRF', label: '🟢 Preferred' },
-  [RestrictionTier.FLEXIBLE]:       { bg: '#94a3b8', text: '#fff', border: '#94a3b8', abbr: 'FLX', label: '⚪ Flexible' },
+const TIER_CONFIG: Record<RestrictionTier, { bg: string; text: string; border: string; abbr: string; label: string; description?: string }> = {
+  [RestrictionTier.INVARIANT]:      { bg: '#7c3aed', text: '#fff', border: '#7c3aed', abbr: 'INV', label: '⛔ Invariant',       description: 'Physically impossible — scheduler will never place a lesson here' },
+  [RestrictionTier.NON_NEGOTIABLE]: { bg: '#ef4444', text: '#fff', border: '#ef4444', abbr: 'NN',  label: '🔴 Non-Negotiable', description: 'Very strong preference — scheduler avoids but may violate if necessary' },
+  [RestrictionTier.IMPORTANT]:      { bg: '#f59e0b', text: '#fff', border: '#f59e0b', abbr: 'IMP', label: '🟡 Important',       description: 'Strong preference' },
+  [RestrictionTier.PREFERRED]:      { bg: '#22c55e', text: '#fff', border: '#22c55e', abbr: 'PRF', label: '🟢 Preferred',       description: 'Soft preference' },
+  [RestrictionTier.FLEXIBLE]:       { bg: '#94a3b8', text: '#fff', border: '#94a3b8', abbr: 'FLX', label: '⚪ Flexible',        description: 'Nice to have' },
 }
 
-// Only tiers a user can assign
+// Tiers a user can paint in the availability grid.
+// INVARIANT is included here (but not in the general restriction form) because
+// teacher unavailability can represent a physical impossibility — the scheduler
+// will never place a lesson at an INVARIANT-blocked slot, regardless of how tight
+// the schedule is.
 const PAINT_TIERS = [
+  RestrictionTier.INVARIANT,
   RestrictionTier.NON_NEGOTIABLE,
   RestrictionTier.IMPORTANT,
   RestrictionTier.FLEXIBLE,
@@ -141,6 +146,7 @@ export function TeacherAvailabilityModal({ open, onClose, onSave, saving, teache
                     color:       active ? c.text    : 'var(--text-2)',
                     borderColor: active ? c.border  : 'var(--border)',
                   }}
+                  title={c.description}
                 >
                   {c.label}
                 </button>
@@ -159,6 +165,12 @@ export function TeacherAvailabilityModal({ open, onClose, onSave, saving, teache
               ✕ Eraser
             </button>
           </div>
+          {/* Contextual hint for the active tier */}
+          {paintMode !== null && TIER_CONFIG[paintMode].description && (
+            <p className="mt-1.5 text-[11px]" style={{ color: 'var(--text-3)' }}>
+              {TIER_CONFIG[paintMode].description}
+            </p>
+          )}
         </div>
 
         {/* ── Grid ── */}
@@ -236,7 +248,7 @@ export function TeacherAvailabilityModal({ open, onClose, onSave, saving, teache
           {PAINT_TIERS.map(tier => {
             const c = TIER_CONFIG[tier]
             return (
-              <div key={tier} className="flex items-center gap-1.5">
+              <div key={tier} className="flex items-center gap-1.5" title={c.description}>
                 <div className="w-3 h-3 rounded-sm" style={{ background: c.bg }} />
                 <span className="text-[11px]" style={{ color: 'var(--text-3)' }}>{c.label}</span>
               </div>
@@ -247,6 +259,9 @@ export function TeacherAvailabilityModal({ open, onClose, onSave, saving, teache
             <span className="text-[11px]" style={{ color: 'var(--text-3)' }}>Available</span>
           </div>
         </div>
+        <p className="text-[11px]" style={{ color: 'var(--text-3)' }}>
+          ⛔ <strong>Invariant</strong> slots are treated as physically impossible by the auto-scheduler — it will never place a lesson there, even if the schedule is tight.
+        </p>
 
         {/* ── Footer ── */}
         <div
