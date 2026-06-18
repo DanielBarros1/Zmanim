@@ -380,6 +380,7 @@ export function ScheduleGrid({
                                     teacher={teacher}
                                     violations={violations}
                                     rooms={rooms}
+                                    entries={entries}
                                     displayClassId={cls.id}
                                     onRemove={() => onRemoveEntry(entry.id)}
                                     onChangeRoom={onChangeRoom}

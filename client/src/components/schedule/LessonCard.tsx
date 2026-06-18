@@ -35,6 +35,7 @@ interface LessonCardProps {
   teacher: Teacher | undefined
   violations: Violation[]
   rooms: Room[]
+  entries: ScheduleEntry[]
   /**
    * For PARALLEL lessons: the class column this card is rendered in.
    * When set, the card shows that class's specific teacher and room instead
@@ -53,6 +54,7 @@ export function LessonCard({
   teacher,
   violations,
   rooms,
+  entries,
   displayClassId,
   onRemove,
   onChangeRoom,
@@ -320,6 +322,9 @@ export function LessonCard({
           rooms={rooms}
           currentRoomId={showRoomId}
           anchorEl={roomBadgeRef.current}
+          day={entry.day}
+          slot={entry.slot}
+          entries={entries}
           onSelect={roomId => onChangeRoom(entry.id, roomId, showWhich)}
           onClose={() => setRoomPopoverOpen(false)}
         />
@@ -329,6 +334,9 @@ export function LessonCard({
           rooms={rooms}
           currentRoomId={entry.roomId2}
           anchorEl={roomBadge2Ref.current}
+          day={entry.day}
+          slot={entry.slot}
+          entries={entries}
           onSelect={roomId => onChangeRoom(entry.id, roomId, 2)}
           onClose={() => setRoomPopover2Open(false)}
         />

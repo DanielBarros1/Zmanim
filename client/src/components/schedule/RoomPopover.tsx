@@ -8,13 +8,18 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import type { Room } from '@zmanim/shared'
+import type { Room, ScheduleEntry, Day } from '@zmanim/shared'
 
 interface RoomPopoverProps {
   rooms: Room[]
   currentRoomId: string | null
   /** The badge button element — used to compute the popover's position */
   anchorEl: HTMLElement
+  /** Current day and slot for checking room availability */
+  day?: Day
+  slot?: number
+  /** All entries in the schedule to check which rooms are occupied */
+  entries?: ScheduleEntry[]
   onSelect: (roomId: string | null) => void
   onClose: () => void
 }
@@ -23,11 +28,24 @@ export function RoomPopover({
   rooms,
   currentRoomId,
   anchorEl,
+  day,
+  slot,
+  entries,
   onSelect,
   onClose,
 }: RoomPopoverProps) {
   const [search, setSearch] = useState('')
   const popoverRef = useRef<HTMLDivElement>(null)
+
+  // Compute which rooms are occupied at the current time slot
+  const occupiedRoomIds = new Set<string>()
+  if (day !== undefined && slot !== undefined && entries) {
+    const occupyingEntries = entries.filter(e => e.day === day && e.slot === slot)
+    occupyingEntries.forEach(e => {
+      if (e.roomId) occupiedRoomIds.add(e.roomId)
+      if (e.roomId2) occupiedRoomIds.add(e.roomId2)
+    })
+  }
 
   // Compute position anchored below the badge button
   const rect = anchorEl.getBoundingClientRect()
@@ -76,6 +94,10 @@ export function RoomPopover({
     r.name.toLowerCase().includes(search.toLowerCase()),
   )
 
+  // Sort: free rooms first, then occupied
+  const freeRooms = filtered.filter(r => !occupiedRoomIds.has(r.id) || currentRoomId === r.id)
+  const occupiedRooms = filtered.filter(r => occupiedRoomIds.has(r.id) && currentRoomId !== r.id)
+
   return createPortal(
     <div
       ref={popoverRef}
@@ -114,7 +136,7 @@ export function RoomPopover({
           <span className={currentRoomId !== null ? 'ml-[14px]' : ''}>No room</span>
         </li>
 
-        {filtered.map(room => (
+        {freeRooms.map(room => (
           <li
             key={room.id}
             className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] cursor-pointer hover:bg-[var(--surface-2)] transition-colors hebrew"
@@ -130,6 +152,33 @@ export function RoomPopover({
             {room.name}
           </li>
         ))}
+
+        {/* Occupied rooms section */}
+        {occupiedRooms.length > 0 && (
+          <>
+            <li
+              className="px-3 py-1 text-[10px] font-semibold"
+              style={{ color: 'var(--text-3)', background: 'var(--surface-2)' }}
+            >
+              Occupied at this time:
+            </li>
+            {occupiedRooms.map(room => (
+              <li
+                key={room.id}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] cursor-not-allowed hebrew"
+                style={{
+                  color: 'var(--text-3)',
+                  opacity: 0.5,
+                  background: 'rgba(239, 68, 68, 0.1)',
+                }}
+                title={`This room is occupied at this time slot`}
+              >
+                <span className="w-[14px] flex-shrink-0" />
+                {room.name}
+              </li>
+            ))}
+          </>
+        )}
 
         {filtered.length === 0 && (
           <li
