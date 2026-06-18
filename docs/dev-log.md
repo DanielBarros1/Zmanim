@@ -119,3 +119,75 @@ All Hebrew text fields consistently use the `.hebrew` CSS class (sets `direction
 - LessonsPage: form inputs for lesson names use `isHebrew` — verified
 - CompactView: subject name in legend has `.hebrew` — ✅
 - Sidebar: "זמנים" Hebrew label in logo — renders inline, no RTL needed (two chars)
+
+---
+
+## 2026-05-31 — Session 9: User Management
+
+### Two-tier user access model
+Added a second tier below root: "invited users" stored in a new `AllowedEmail` DB table. Root users (env-based, `ALLOWED_EMAILS`) can add/revoke invited users via the `/users` admin page. Invited users can log in but cannot manage other users. The `/users` page is root-only.
+
+**Why not roles on the User model?** Root is an ops/owner concern that should survive any DB reset — keeping it in `ALLOWED_EMAILS` env means even if the entire DB is wiped, the owner can still log in. The invited-user table is for everyone else.
+
+**`isRoot` on AuthUser:** Derived from env at request time (not stored in DB) and exposed via `/auth/me`. Used by the frontend to show/hide the Admin sidebar section and guard the Users page.
+
+**Migration history activated:** This session added the first real Prisma migration (`20260531120000_add_allowed_email`). The initial schema was baselined as `20260101000000_initial_schema` using `prisma migrate resolve --applied`. Future schema changes must follow `migrate dev` → commit migration file → `migrate deploy` on prod.
+
+---
+
+## 2026-06-17 — Session 10: AS Algorithm Overhaul + Observability
+
+### In-process log buffer + /api/logs endpoint
+Added `server/src/services/logBuffer.ts`: a 1000-entry circular buffer that intercepts `process.stdout.write` and `process.stderr.write` at startup. This captures logs from the AS job (which runs in the main thread via `setImmediate`) as well as all other server logs.
+
+`GET /api/logs` is protected by either a valid root session or a `LOG_API_KEY` bearer token (set in `.env`). This allows programmatic log access via `curl` without a browser session — used for autonomous debugging between Claude sessions.
+
+**Why intercept process.write instead of console.log?** The AS uses `console.log` / `console.warn` which route through `process.stdout.write`/`process.stderr.write`. Intercepting at the stream level captures everything including third-party library logs.
+
+### Gate S: seed validation (warning-only)
+Before each AS run, if a seed schedule is provided, all seed entries are evaluated for D-invariant (hard) violations. The result is **logged as a warning only — it never blocks the run**.
+
+**Why:** Admins deliberately place some lessons in conflicting positions (e.g. teacher double-booked for a one-off event). The seed represents user-verified reality. Blocking on seed violations would make the AS unusable for partially-problematic seeds.
+
+### isSeededOnlyViolation: treating seeded violations as user-accepted
+Helper function that returns `true` when ALL `affectedEntryIds` in a violation belong to seeded entries. Used in three places:
+1. **Gate 2:** Seeded-only violations don't block the run even if they're INVARIANT-tier
+2. **compositeHard in local search:** Seeded-only INVARIANT violations excluded from the hard-violation count so they don't inflate SA temperature
+3. **Candidate ranking:** `invariantCount` excludes seeded-only violations for fair comparison between restarts
+
+### Dynamic MRV in the backtracker (replaced static pre-sort)
+The original backtracker pre-sorted instances by constraint density at startup and used that static order for all levels. This caused 44/60 restarts to time out because the "most constrained" order is stale after each placement.
+
+**New approach:** At every recursive level, scan all unplaced instances, count valid slots for each against CURRENT occupancy, and pick the one with the fewest options (dynamic MRV). If any instance has 0 valid slots, return false immediately (early pruning). This is classic constraint propagation — it reduced timeouts from 44/60 to 0/30.
+
+**Cost:** O(n²) per level instead of O(1) lookup, but n is small (≤200 instances) and the prune gain more than compensates.
+
+### Gate 2: blocking types restricted
+Gate 2 validates the AS output before saving. Originally it blocked on ALL INVARIANT violations. Reduced to only physically-impossible conflicts:
+- `TEACHER_DOUBLE_BOOKED` (D1)
+- `CLASS_DOUBLE_BOOKED` (D2)
+- `LESSON_GRADE_SYNC` (D3/D4)
+
+`CLASS_SUBJECT_TWICE_PER_DAY` (D7) was removed. D7 is a quality preference that the AS cannot always satisfy — treating it as a hard blocker caused valid 30-restart runs to be discarded after 5+ minutes of work.
+
+### Top-1 candidate instead of top-3
+The AS previously tracked the 3 best candidates across all restarts, keeping 3 full entry arrays in memory simultaneously. On the 1 GB Oracle VM this was enough to trigger OOM on long runs (30 restarts × large entry arrays × 3 copies).
+
+Changed to track only 1 best candidate. The ranking function (`isBetterCandidate`) is unchanged — it still compares by invariantCount → classConflicts → gradeSyncConflicts → hardCount → score. The client-facing API response format is unchanged (still has `candidates[]` array, just always length 1 now).
+
+### Telegram notification on deploy
+`.github/workflows/deploy.yml` now sends a Telegram message via `appleboy/telegram-action@v0.1.1` after every successful SSH deploy. Secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` stored in GitHub repo secrets. Uses an existing Telegram bot (not a new one).
+
+### Postgres OOM during long AS runs (ongoing)
+During 30-restart runs, Postgres gets OOM-killed by the kernel around restart 14–16, dropping all `connect-pg-simple` session store connections. Symptoms: `Connection terminated unexpectedly` errors in server logs every ~10s, "lost connection" for client polling.
+
+**Root cause:** 1 GB RAM with no swap. The AS holds a large in-memory state for ~5 minutes; Postgres has no room to page out.
+
+**Mitigation in code:** Reduced peak memory by switching to top-1 candidate.
+
+**Full fix (manual server action):** Add 1 GB swap on the Oracle VM:
+```bash
+sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```

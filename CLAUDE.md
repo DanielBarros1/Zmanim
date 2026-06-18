@@ -258,6 +258,7 @@ Mutation routes require `ADMIN` role (enforced by `requireAdmin` middleware).
 | `/api/schedules/auto` | routes/autoscheduler.ts | POST (run AS), GET status, DELETE (cancel) |
 | `/api/import` | routes/import.ts | POST XLSX, returns parsed lesson rows |
 | `/api/users` | routes/users.ts | GET list, POST invite, DELETE revoke — root only |
+| `/api/logs` | routes/logs.ts | GET recent server logs — root session OR LOG_API_KEY bearer |
 
 ---
 
@@ -335,9 +336,52 @@ Results are cached in TanStack Query and invalidated after every placement.
 
 ## The Auto-Scheduler
 
-`server/src/services/autoscheduler.ts` runs in a worker thread.
+`server/src/services/autoscheduler.ts` runs in the main thread via `setImmediate`
+between restarts (NOT a worker thread — `tsx watch` can't load workers pointing to
+the same `__filename`).
 
-**Three-layer placement guarantee** (every lesson MUST be placed):
+### Candidate tracking
+Only the single **best candidate** is kept across all restarts (not top-3) to
+conserve memory on the 1 GB Oracle VM. Ranking: invariantCount → classConflicts →
+gradeSyncConflicts → hardCount → score. The API response still has `candidates[]`
+(always length 1) for forward-compatibility.
+
+### Gate S — seed validation (warning-only)
+Before each run, if a seed schedule is provided, all seed entries are evaluated for
+D-invariant violations and logged as a warning. **Gate S never blocks the run.**
+Admins sometimes deliberately seed conflicting placements — those are treated as
+user-accepted anchors for the duration of the AS.
+
+### isSeededOnlyViolation
+Helper that returns `true` when ALL `affectedEntryIds` in a violation belong to
+seeded entries (i.e. the conflict is entirely within the user-anchored seed, not
+introduced by the AS). Applied in:
+- **Gate 2:** seeded-only violations don't block finalization
+- **compositeHard in local search:** excluded from the hard count (avoids inflating SA)
+- **Candidate `invariantCount`:** excluded for fair cross-restart ranking
+
+### Gate 2 — blocking violation types
+Gate 2 validates the final result before saving to the DB. Only these three types
+block (physical impossibilities):
+- `TEACHER_DOUBLE_BOOKED` (D1)
+- `CLASS_DOUBLE_BOOKED` (D2)
+- `LESSON_GRADE_SYNC` (D3/D4)
+
+`CLASS_SUBJECT_TWICE_PER_DAY` (D7) is intentionally excluded — it's a quality
+preference the AS cannot always satisfy, not a physical impossibility. Including it
+caused valid results to be discarded after 5+ minutes of work.
+
+### Dynamic MRV in the backtracker
+The backtracker uses **dynamic Minimum Remaining Values**: at each recursive level,
+it scans ALL unplaced instances against CURRENT occupancy, counts valid slots per
+instance, and picks the most constrained one first. If any instance has 0 valid
+slots, it returns false immediately (early prune).
+
+This replaced a static pre-sort that computed constraint order once at startup —
+the static order goes stale after each placement, which caused 44/60 restarts to
+time out. With dynamic MRV: 0/30 timeouts on the same data.
+
+### Three-layer placement guarantee (every lesson MUST be placed)
 1. **Count-based seed exclusion:** `seededCountPerLesson` Map tracks how many
    instances of each lesson are already seeded. The `toPlace` array only includes
    instances that need a new placement.
@@ -350,6 +394,13 @@ Results are cached in TanStack Query and invalidated after every placement.
 
 If after all restarts no valid candidate places every lesson, the job fails with a
 user-friendly error explaining the slot budget.
+
+### Postgres OOM on long runs
+The Oracle VM has 1 GB RAM and no swap. During 30-restart runs, Postgres is
+OOM-killed around restart 14–16, dropping `connect-pg-simple` session store
+connections. Clients see "lost connection" / polling fails. Full fix: add 1 GB
+swap on the server (see dev-log 2026-06-17 for the commands). No code workaround
+exists beyond minimizing peak memory (top-1 candidate).
 
 ---
 
@@ -463,23 +514,30 @@ All server update routes use `PATCH`, not `PUT`. Client hooks must use
 
 ---
 
-## Current Status (2026-05-31)
+## Current Status (2026-06-17)
 
 ### Done
 - All 12 build phases complete
 - Production live at `https://zmanim.duckdns.org`
-- Google OAuth configured and working
-- GitHub Actions auto-deploy on push to `main`
+- Google OAuth + two-tier user access (root via env, invited via DB)
+- GitHub Actions auto-deploy on push to `main`, with Telegram notification on success
+- In-process log buffer + `GET /api/logs` for autonomous log access
+- Auto-scheduler: dynamic MRV backtracker, Gate S, seeded-violation exclusion, top-1 candidate
+- Admin log viewer page at `/admin/logs`
+
+### Known issue — Postgres OOM during long AS runs
+The Oracle VM has no swap space. Postgres gets OOM-killed mid-run (around restart 14–16
+of a 30-restart job), dropping session store connections and causing "lost connection" for
+the polling client. Fix: add swap on the server (see dev-log 2026-06-17).
 
 ### Pending / TODO
 See `TODO.md` for the full backlog. Key items:
 
+- **T1–T9 testing backlog** — see TODO.md "Testing Backlog" section (added 2026-06-17)
+- **Swap space on Oracle VM** — manual server action needed to fix Postgres OOM
 - **XLSX Exporter** — export published schedule to Excel
 - **Per-Class Timetable Print** — bulk-generate A4 timetables for all 12 classes
 - **Teacher Personal Schedule Link (Milestone 2)** — read-only `/teacher/{token}` URL
-- **Teacher Workload Dashboard** — hours assigned vs target hours
-- **Prisma migration discipline** — currently `db push`; switch to `migrate dev/deploy`
-  before the next schema change in production
 
 ### Minor cleanup
 - Remove dead `gradeMap` comment in `CompactViewPage`

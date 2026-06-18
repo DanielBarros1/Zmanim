@@ -34,6 +34,7 @@ import {
   useCloneSchedule,
   usePublishSchedule,
   useEvaluation,
+  useExportScheduleXLSX,
 } from '../api/schedules'
 import { ScheduleState } from '@zmanim/shared'
 import type { ScheduleSummary } from '@zmanim/shared'
@@ -107,6 +108,7 @@ function ScheduleCard({
   onPublish,
   onToggleStar,
   onRename,
+  onExport,
 }: {
   schedule: ScheduleSummary
   onOpen: () => void
@@ -115,6 +117,7 @@ function ScheduleCard({
   onPublish: () => void
   onToggleStar: () => void
   onRename: (name: string) => void
+  onExport: () => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [nameInput, setNameInput] = useState(schedule.name)
@@ -217,6 +220,11 @@ function ScheduleCard({
         <Button variant="secondary" size="sm" onClick={onClone} title="Duplicate this schedule">
           Clone
         </Button>
+        {schedule.totalPlaced > 0 && (
+          <Button variant="secondary" size="sm" onClick={onExport} title="Export to Excel">
+            📊 Export
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -237,6 +245,7 @@ export function HomePage() {
   const deleteSchedule = useDeleteSchedule()
   const cloneSchedule = useCloneSchedule()
   const publishSchedule = usePublishSchedule()
+  const exportScheduleXLSX = useExportScheduleXLSX()
   const navigate = useNavigate()
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -323,6 +332,7 @@ export function HomePage() {
                 })
               }
               onRename={name => updateSchedule.mutate({ id: schedule.id, data: { name } })}
+              onExport={() => exportScheduleXLSX.mutate(schedule.id)}
             />
           ))}
         </div>

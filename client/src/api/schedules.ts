@@ -100,6 +100,29 @@ export function useCloneSchedule() {
   })
 }
 
+export function useExportScheduleXLSX() {
+  return useMutation({
+    mutationFn: (id: string) => {
+      return apiClient.get(`/api/schedules/${id}/export/xlsx`, {
+        responseType: 'blob',
+      }).then(r => ({
+        blob: r.data as Blob,
+        filename: r.headers['content-disposition']?.split('filename="')[1]?.split('"')[0] || 'schedule.xlsx',
+      }))
+    },
+    onSuccess: (data) => {
+      const url = window.URL.createObjectURL(data.blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = data.filename
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    },
+  })
+}
+
 // ── Entries (placements) ────────────────────────────────────────
 
 export interface PlaceEntryResponse {

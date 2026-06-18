@@ -1,9 +1,13 @@
 # Zmanim — TODO & Feature Backlog
 
-> Last updated: 2026-05-31 (session 9)
+> Last updated: 2026-06-18 (session 10)
 > This file is the source of truth for all pending work. Update it at the end of every session.
 
 ---
+
+## ✅ Recently Completed (session 10 — 2026-06-18)
+
+- **XLSX Exporter** — `GET /api/schedules/:id/export/xlsx`. Exports schedule as Excel workbook with one sheet per grade (rows = day×slot, columns = class A/B). Client-side button on HomePage schedule cards. Uses xlsx library.
 
 ## ✅ Recently Completed (session 9 — 2026-05-31)
 
@@ -45,20 +49,52 @@ After deploying the new Docker image (via GitHub Actions push to main), run the 
 
 ## Feature Backlog
 
-### 1. XLSX Exporter
-Export the published schedule to Excel. Format TBD — needs a decision on layout (one sheet per grade? per teacher? one big matrix?) before implementation.
+### 1. ~~XLSX Exporter~~ ✅ Done (session 10 — one sheet per grade)
 
 ### 2. ~~Teacher Availability Batch Editor~~ ✅ Done
 
 ### 3. ~~Quick-Fix Suggestions~~ ✅ Done (v1 — 10 of 20 types; remaining 10 return "no fix found")
 
-### 4. Per-Class Timetable Print / Export
+### 3. Per-Class Timetable Print / Export
 Bulk-generate one clean A4 timetable per class (Mon–Thu × slots, with subject/teacher/room per cell). All 12 classes in one PDF. Saves the admin from manually building these in Excel every semester.
 
-### 5. ~~Drag-Conflict Nudge Tooltip~~ ✅ Done
+### 4. ~~Drag-Conflict Nudge Tooltip~~ ✅ Done
 
-### 6. Teacher Personal Schedule Link (Milestone 2)
+### 5. Teacher Personal Schedule Link (Milestone 2)
 A read-only URL (`/teacher/{token}`) showing a teacher's own weekly timetable from the published schedule. No login required, mobile-friendly, always reflects the latest published version. Teachers currently get a PDF by email — a live link means they always see the current state. This is Milestone 2 from the original spec.
+
+---
+
+## 🧪 Testing Backlog (2026-06-17)
+
+Issues found during manual testing of the scheduler and editor.
+
+### T1 — Free day for grade 12
+Grade 12 doesn't have enough lessons to fill a full week, so one day should be declared a "Free Day" — no lessons placed in it at all. Needs design: is this a restriction (`CLASS_FREE_DAY`), a config flag on the grade, or something else? If a restriction, the AS must respect it and the evaluator must enforce it. Discuss before implementing.
+
+### T2 — Day labels hard to read in manual schedule editor
+The day-column headers in the schedule grid are not prominent enough and are hard to scan. Make them more visually distinct (bolder, larger, or with a background separator).
+
+### T3 — Roomless lessons (no room required)
+Some lessons (e.g. PE outside, online sessions) don't need a physical room. Add a boolean `noRoomRequired` flag on `Lesson`. The room allocator in the AS and the manual editor should skip room assignment for these entries entirely. Related migration: `20260604120000_add_subject_no_room_required` may partially address this at the subject level — check what exists before adding a new migration.
+
+### T4 — Small rooms: room capacity tiers
+Two-tier room sizing: mark a `Room` as `isSmall: boolean`. Mark a `Lesson` as `allowSmallRoom: boolean`. Room allocator must only assign small rooms to lessons explicitly flagged as compatible. Large classes must not be placed in small rooms.
+
+### T5 — Mark entire day as unavailable in teacher availability modal
+In the teacher availability modal, clicking a single button for a day should toggle ALL slots in that day unavailable (or toggle them back). One click per day instead of slot-by-slot.
+
+### T6 — Click empty slot to place a lesson (with eligibility surfacing)
+Clicking an empty cell in the manual schedule grid should open a modal listing all lessons eligible for that slot. Ineligible lessons should also appear (grayed out) with the violation they would create, and an override option to place them anyway.
+
+### T7 — Room assignment modal: show availability
+When manually assigning a room to a placed lesson, only show rooms that are free at that time slot. Occupied rooms should still appear but with a warning (which lesson is using them), allowing the user to override if needed.
+
+### T8 — Overridden violations excluded from violation counts
+Throughout the app (sidebar badge, violations panel header, landing page stats), violation counts include overridden violations. Overridden violations should not count toward any displayed total — only active (non-overridden) violations should be counted.
+
+### T9 — Art rooms reserved for art lessons only
+The room allocator (both AS and manual assignment) must never place a non-art lesson in a room designated as an art room. This is likely a new evaluator restriction type and allocator filter. Needs a way to mark a room as "art room" (could be a `roomType` enum or a boolean `isArtRoom` on `Room`).
 
 ---
 

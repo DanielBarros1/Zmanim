@@ -8,12 +8,15 @@
  * DELETE /api/schedules/:id        → delete (guard: not PUBLISHED)
  * POST   /api/schedules/:id/publish → publish (un-publishes any current published schedule)
  * POST   /api/schedules/:id/clone   → duplicate as new draft
+ * GET    /api/schedules/:id/export/xlsx → export as Excel file (one sheet per grade)
  */
 
 import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../db'
 import { requireAuth, requireAdmin } from '../middleware/auth'
+import * as XLSX from 'xlsx'
+import { Day } from '@zmanim/shared'
 
 export const schedulesRouter = Router()
 
@@ -150,3 +153,124 @@ schedulesRouter.post('/:id/clone', requireAuth, requireAdmin, async (req, res, n
     res.status(201).json(newSchedule)
   } catch (err) { next(err) }
 })
+
+// ─── Export to XLSX ────────────────────────────────
+
+const DAY_ORDER: Record<Day, number> = {
+  SUNDAY: 0,
+  MONDAY: 1,
+  TUESDAY: 2,
+  WEDNESDAY: 3,
+  THURSDAY: 4,
+}
+
+const DAY_LABELS: Record<Day, string> = {
+  SUNDAY: 'Sunday',
+  MONDAY: 'Monday',
+  TUESDAY: 'Tuesday',
+  WEDNESDAY: 'Wednesday',
+  THURSDAY: 'Thursday',
+}
+
+schedulesRouter.get('/:id/export/xlsx', requireAuth, async (req, res, next) => {
+  try {
+    // Fetch schedule with all related data
+    const schedule = await prisma.schedule.findUniqueOrThrow({
+      where: { id: req.params.id },
+      include: {
+        entries: {
+          include: {
+            lesson: {
+              include: {
+                subject: true,
+                teacher: true,
+                classes: true,
+                lessonTeachers: { include: { teacher: true } },
+              },
+            },
+            room: true,
+          },
+        },
+      },
+    })
+
+    // Fetch all grades, classes, and config for proper structure
+    const [grades, classes, config] = await Promise.all([
+      prisma.grade.findMany({ orderBy: { number: 'asc' } }),
+      prisma.class.findMany({
+        include: { grade: true },
+        orderBy: [{ gradeId: 'asc' }, { section: 'asc' }],
+      }),
+      prisma.schoolConfig.findFirst(),
+    ])
+
+    if (!config) throw new Error('School config not found')
+
+    // Create workbook
+    const wb = XLSX.utils.book_new()
+    const slotsPerDay = config.slotsPerDay
+
+    // Create one sheet per grade
+    for (const grade of grades) {
+      const gradeClasses = classes.filter(c => c.gradeId === grade.id)
+      const [classA, classB] = gradeClasses
+
+      // Build grid: rows = day × slot, columns = classA, classB
+      const gridData: (string | null)[][] = []
+
+      // Header row
+      gridData.push([
+        'Time',
+        classA ? `Grade ${grade.number}${classA.section}` : '',
+        classB ? `Grade ${grade.number}${classB.section}` : '',
+      ])
+
+      // Data rows: one per slot per day
+      const workDays = (config.workDays as Day[]).sort((a, b) => DAY_ORDER[a] - DAY_ORDER[b])
+      for (const day of workDays) {
+        for (let slot = 1; slot <= slotsPerDay; slot++) {
+          const rowLabel = `${DAY_LABELS[day]} — Slot ${slot}`
+          const cellA = buildCell(schedule.entries, classA, day, slot)
+          const cellB = buildCell(schedule.entries, classB, day, slot)
+          gridData.push([rowLabel, cellA || '', cellB || ''])
+        }
+      }
+
+      // Create sheet and add to workbook
+      const ws = XLSX.utils.aoa_to_sheet(gridData)
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 20 },
+        { wch: 35 },
+        { wch: 35 },
+      ]
+      XLSX.utils.book_append_sheet(wb, ws, `Grade ${grade.number}`)
+    }
+
+    // Write to buffer and send
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', `attachment; filename="schedule-${schedule.name}.xlsx"`)
+    res.send(buffer)
+  } catch (err) { next(err) }
+})
+
+function buildCell(entries: any[], classRecord: any, day: Day, slot: number): string | null {
+  if (!classRecord) return null
+
+  const entry = entries.find(
+    e => e.lesson.classes.some((c: any) => c.id === classRecord.id) &&
+         e.day === day &&
+         e.slot === slot
+  )
+
+  if (!entry) return null
+
+  const { lesson } = entry
+  const subject = lesson.subject.name
+  const teachers = lesson.teacher
+    ? lesson.teacher.name
+    : lesson.lessonTeachers.map((lt: any) => lt.teacher.name).join(', ')
+
+  return `${subject}\n${teachers}`
+}
