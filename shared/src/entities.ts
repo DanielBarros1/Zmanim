@@ -90,6 +90,8 @@ export interface Room {
   id: string
   name: string           // Hebrew
   capacity: RoomCapacity
+  isSmall: boolean
+  isArtRoom: boolean
 }
 
 // ─── Teacher ─────────────────────────────────────────────────

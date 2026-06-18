@@ -125,7 +125,7 @@ export function RoomsPage() {
   const handleCreate = async (form: FormState) => {
     setCreateError(undefined)
     try {
-      await createRoom.mutateAsync({ name: form.name.trim(), capacity: form.capacity })
+      await createRoom.mutateAsync({ name: form.name.trim(), capacity: form.capacity, isSmall: form.isSmall, isArtRoom: form.isArtRoom })
       setModalOpen(false)
     } catch (err: any) {
       setCreateError(err?.response?.data?.error ?? 'Failed to save room.')
@@ -138,7 +138,7 @@ export function RoomsPage() {
     try {
       await updateRoom.mutateAsync({
         id: editingRoom.id,
-        data: { name: form.name.trim(), capacity: form.capacity },
+        data: { name: form.name.trim(), capacity: form.capacity, isSmall: form.isSmall, isArtRoom: form.isArtRoom },
       })
       setEditingRoom(null)
     } catch (err: any) {

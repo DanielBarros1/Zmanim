@@ -58,6 +58,7 @@ import { ScheduleGrid } from '../components/schedule/ScheduleGrid'
 import { LessonPool } from '../components/schedule/LessonPool'
 import { ViolationPanel } from '../components/schedule/ViolationPanel'
 import { ViolationConfirmModal } from '../components/schedule/ViolationConfirmModal'
+import { LessonPlacementModal } from '../components/schedule/LessonPlacementModal'
 import { Button } from '../components/ui/Button'
 import { CenteredSpinner } from '../components/ui/Spinner'
 import {
@@ -333,6 +334,9 @@ export function ScheduleEditorPage() {
 
   // Visible error shown when a placement API call fails
   const [placementError, setPlacementError] = useState<string | null>(null)
+
+  // Lesson placement modal (opened by clicking empty cell)
+  const [cellClickModal, setCellClickModal] = useState<{ day: Day; slot: number; classId: string } | null>(null)
 
   // Violation confirm modal
   const [pendingAction, setPendingAction] = useState<{
@@ -749,11 +753,20 @@ export function ScheduleEditorPage() {
   )
 
   const handleCellClick = useCallback(
-    (_day: Day, _slot: number, _classId: string) => {
-      // For now: cell click does nothing without drag (lessons must be dragged from pool)
-      // Future: could open a picker modal
+    (day: Day, slot: number, classId: string) => {
+      setCellClickModal({ day, slot, classId })
     },
     [],
+  )
+
+  const handlePlaceLessonFromModal = useCallback(
+    (lessonId: string) => {
+      if (!cellClickModal) return
+      const { day, slot } = cellClickModal
+      placeEntry.mutate({ lessonId, day, slot })
+      setCellClickModal(null)
+    },
+    [cellClickModal, placeEntry],
   )
 
   // which=1 → update roomId (default); which=2 → update roomId2 (PARALLEL second class)
@@ -1105,6 +1118,22 @@ export function ScheduleEditorPage() {
         onCancel={() => setPendingAction(null)}
         isLoading={placeEntry.isPending || moveEntry.isPending}
       />
+
+      {/* Lesson placement modal (T6) — open when clicking an empty cell */}
+      {cellClickModal && (
+        <LessonPlacementModal
+          open={!!cellClickModal}
+          onClose={() => setCellClickModal(null)}
+          slot={cellClickModal.slot}
+          classId={cellClickModal.classId}
+          lessons={lessons}
+          subjects={subjects}
+          entries={entries}
+          evaluation={evaluation}
+          onPlace={handlePlaceLessonFromModal}
+          loading={placeEntry.isPending}
+        />
+      )}
     </DndContext>
   )
 }

@@ -5,17 +5,17 @@
  */
 
 import { useState } from 'react'
-import type { Day, Lesson, ScheduleEntry, EvaluationResult } from '@zmanim/shared'
+import type { Lesson, ScheduleEntry, EvaluationResult, Subject } from '@zmanim/shared'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
 
 interface LessonPlacementModalProps {
   open: boolean
   onClose: () => void
-  day: Day
   slot: number
   classId: string
   lessons: Lesson[]
+  subjects: Subject[]
   entries: ScheduleEntry[]
   evaluation: EvaluationResult | null
   onPlace: (lessonId: string, overrides?: string[]) => void
@@ -25,10 +25,10 @@ interface LessonPlacementModalProps {
 export function LessonPlacementModal({
   open,
   onClose,
-  day,
   slot,
   classId,
   lessons,
+  subjects,
   entries,
   evaluation,
   onPlace,
@@ -37,6 +37,9 @@ export function LessonPlacementModal({
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null)
 
   if (!open) return null
+
+  // Build subject map for quick lookups
+  const subjectMap = Object.fromEntries(subjects.map(s => [s.id, s]))
 
   // Filter lessons that can go in this class
   const availableLessons = lessons.filter(l =>
@@ -95,20 +98,23 @@ export function LessonPlacementModal({
                     ✓ Can place without violations:
                   </p>
                   <div className="space-y-1.5">
-                    {eligibleLessons.map(lesson => (
-                      <button
-                        key={lesson.id}
-                        onClick={() => setSelectedLessonId(lesson.id)}
-                        className="w-full text-left px-3 py-2 rounded border-2 transition-all hebrew"
-                        style={{
-                          borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : 'var(--border)',
-                          background: selectedLessonId === lesson.id ? 'var(--accent-bg)' : 'transparent',
-                          color: 'var(--text-1)',
-                        }}
-                      >
-                        {lesson.subject.name} ({lesson.hoursPerWeek}h)
-                      </button>
-                    ))}
+                    {eligibleLessons.map(lesson => {
+                      const subject = subjectMap[lesson.subjectId]
+                      return (
+                        <button
+                          key={lesson.id}
+                          onClick={() => setSelectedLessonId(lesson.id)}
+                          className="w-full text-left px-3 py-2 rounded border-2 transition-all hebrew"
+                          style={{
+                            borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : 'var(--border)',
+                            background: selectedLessonId === lesson.id ? 'var(--accent-bg)' : 'transparent',
+                            color: 'var(--text-1)',
+                          }}
+                        >
+                          {subject?.name ?? '—'} ({lesson.hoursPerWeek}h)
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               )}
@@ -120,23 +126,26 @@ export function LessonPlacementModal({
                     ⚠ Would create violations:
                   </p>
                   <div className="space-y-2">
-                    {Array.from(ineligibleLessons.entries()).map(([lesson, violations]) => (
-                      <div
-                        key={lesson.id}
-                        className="px-3 py-2 rounded border-2 hebrew"
-                        style={{
-                          borderColor: '#FCA5A5',
-                          background: '#FEF2F2',
-                          color: 'var(--text-3)',
-                          opacity: 0.7,
-                        }}
-                      >
-                        <p className="font-medium">{lesson.subject.name}</p>
-                        <p className="text-[11px] mt-1">
-                          {violations.join(', ')}
-                        </p>
-                      </div>
-                    ))}
+                    {Array.from(ineligibleLessons.entries()).map(([lesson, violations]) => {
+                      const subject = subjectMap[lesson.subjectId]
+                      return (
+                        <div
+                          key={lesson.id}
+                          className="px-3 py-2 rounded border-2 hebrew"
+                          style={{
+                            borderColor: '#FCA5A5',
+                            background: '#FEF2F2',
+                            color: 'var(--text-3)',
+                            opacity: 0.7,
+                          }}
+                        >
+                          <p className="font-medium">{subject?.name ?? '—'}</p>
+                          <p className="text-[11px] mt-1">
+                            {violations.join(', ')}
+                          </p>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}
