@@ -33,9 +33,10 @@ interface FormState {
   name: string
   capacity: RoomCapacity
   isSmall: boolean
+  isArtRoom: boolean
 }
 
-const EMPTY_FORM: FormState = { name: '', capacity: RoomCapacity.STANDARD, isSmall: false }
+const EMPTY_FORM: FormState = { name: '', capacity: RoomCapacity.STANDARD, isSmall: false, isArtRoom: false }
 
 function RoomForm({
   initial,
@@ -82,6 +83,12 @@ function RoomForm({
         label="Small room (only for lessons flagged as allowSmallRoom)"
         checked={form.isSmall}
         onChange={e => setForm(p => ({ ...p, isSmall: e.target.checked }))}
+      />
+
+      <Checkbox
+        label="Art room (reserved for art subjects only)"
+        checked={form.isArtRoom}
+        onChange={e => setForm(p => ({ ...p, isArtRoom: e.target.checked }))}
       />
 
       {error && (
@@ -260,7 +267,7 @@ export function RoomsPage() {
       >
         {editingRoom && (
           <RoomForm
-            initial={{ name: editingRoom.name, capacity: editingRoom.capacity, isSmall: editingRoom.isSmall }}
+            initial={{ name: editingRoom.name, capacity: editingRoom.capacity, isSmall: editingRoom.isSmall, isArtRoom: editingRoom.isArtRoom }}
             onSave={handleUpdate}
             onCancel={() => { setEditingRoom(null); setEditError(undefined) }}
             loading={updateRoom.isPending}

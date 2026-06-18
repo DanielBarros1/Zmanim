@@ -146,6 +146,8 @@ model Room {
   capacity       RoomCapacity @default(STANDARD)
   // If true, this is a small room that can only be used by lessons flagged allowSmallRoom=true
   isSmall        Boolean      @default(false)
+  // If true, this room is reserved for art lessons only (subjects with isArts=true)
+  isArtRoom      Boolean      @default(false)
   // Subjects that have this room as their specialized room
   specializedFor Subject[]    @relation("SpecializedSubjects")
   entries        ScheduleEntry[] @relation("EntryRoom1")

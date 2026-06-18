@@ -1287,15 +1287,22 @@ function assignRooms(entries: any[], lessons: any[], rooms: any[]): any[] {
 
     // Pass 3: assign any remaining free room to entries still without one.
     // Skip subjects that explicitly don't need a room (e.g. PE outdoors).
-    // Also filter rooms based on lesson's allowSmallRoom flag.
+    // Also filter rooms based on:
+    //   - lesson's allowSmallRoom flag (small rooms only if allowed)
+    //   - lesson's subject isArts flag (art rooms only for art subjects)
     for (const idx of indices) {
       const e = result[idx]
       if (e.roomId) continue
       const lesson = lessonMap.get(e.lessonId)
       if (lesson?.subject?.noRoomRequired) continue  // intentionally roomless
-      // Filter available rooms: skip small rooms unless the lesson allows them
+      const isArtSubject = lesson?.subject?.isArts ?? false
+      // Filter available rooms by constraints:
+      // - skip small rooms unless the lesson allows them
+      // - skip art rooms unless the subject is arts
       const freeRoom = rooms.find((r: any) =>
-        !usedRoomIds.has(r.id) && (lesson?.allowSmallRoom || !r.isSmall)
+        !usedRoomIds.has(r.id) &&
+        (lesson?.allowSmallRoom || !r.isSmall) &&
+        (isArtSubject || !r.isArtRoom)
       )
       if (freeRoom) {
         result[idx].roomId = freeRoom.id
