@@ -106,9 +106,9 @@ export function StatsBar({ schedule, evaluation }: StatsBarProps) {
       {/* Violations */}
       <StatCard
         label="Violations"
-        value={violations - overridden}
+        value={violations}
         sub={overridden > 0 ? `${overridden} overridden` : undefined}
-        warn={violations - overridden > 0}
+        warn={violations > 0}
         ok={violations === 0}
       />
 
