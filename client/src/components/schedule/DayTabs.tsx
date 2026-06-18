@@ -48,7 +48,7 @@ export function DayTabs({ entries, workDays }: DayTabsProps) {
 
   return (
     <div
-      className="flex items-center gap-1 px-6 py-2 border-b flex-shrink-0 overflow-x-auto"
+      className="flex items-center gap-2 px-6 py-3 border-b flex-shrink-0 overflow-x-auto"
       style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
     >
       {days.map(day => {
@@ -58,10 +58,13 @@ export function DayTabs({ entries, workDays }: DayTabsProps) {
           <button
             key={day}
             onClick={() => setActiveDay(day)}
-            className="flex items-center gap-2 px-4 py-2 rounded-md text-[13px] font-medium transition-colors whitespace-nowrap"
+            className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-all whitespace-nowrap"
             style={{
-              background: isActive ? 'var(--accent-bg)' : 'transparent',
-              color: isActive ? 'var(--accent-text)' : 'var(--text-2)',
+              background: isActive ? 'var(--accent)' : 'var(--surface-2)',
+              color: isActive ? '#fff' : 'var(--text-1)',
+              border: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+              fontWeight: isActive ? '700' : '600',
+              fontSize: '14px',
             }}
             aria-pressed={isActive}
             title={DAY_LABEL[day]}
@@ -69,10 +72,10 @@ export function DayTabs({ entries, workDays }: DayTabsProps) {
             <span>{DAY_SHORT[day]}</span>
             {count > 0 && (
               <span
-                className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                className="text-[9px] font-bold px-2 py-0.5 rounded-full"
                 style={{
-                  background: isActive ? 'var(--accent)' : 'var(--surface-2)',
-                  color: isActive ? '#fff' : 'var(--text-3)',
+                  background: isActive ? 'rgba(255,255,255,0.3)' : 'var(--accent)',
+                  color: isActive ? '#fff' : '#fff',
                 }}
               >
                 {count}
