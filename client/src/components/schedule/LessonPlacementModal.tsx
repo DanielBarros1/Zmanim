@@ -9,6 +9,7 @@ import type { Lesson, ScheduleEntry, Subject, EvaluationResult, Violation } from
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
 import apiClient from '../../api/client'
+import { createPortal } from 'react-dom'
 
 interface LessonPlacementModalProps {
   open: boolean
@@ -39,6 +40,8 @@ export function LessonPlacementModal({
 }: LessonPlacementModalProps) {
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null)
   const [violationsByLesson, setViolationsByLesson] = useState<Map<string, Violation[]>>(new Map())
+  const [hoveredLessonId, setHoveredLessonId] = useState<string | null>(null)
+  const [popoverAnchor, setPopoverAnchor] = useState<HTMLElement | null>(null)
 
   // Evaluate all available lessons when modal opens
   useEffect(() => {
@@ -119,28 +122,79 @@ export function LessonPlacementModal({
                       const violations = violationsByLesson.get(lesson.id) || []
                       const hasViolations = violations.length > 0
                       return (
-                        <div key={lesson.id} className="space-y-1">
+                        <div key={lesson.id} className="flex items-center justify-between px-3 py-2 rounded border-2"
+                          style={{
+                            borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : 'var(--border)',
+                            background: selectedLessonId === lesson.id ? 'var(--accent-bg)' : 'transparent',
+                          }}
+                        >
                           <button
                             onClick={() => setSelectedLessonId(lesson.id)}
-                            className="w-full text-left px-3 py-2 rounded border-2 transition-all hebrew"
-                            style={{
-                              borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : hasViolations ? '#FCA5A5' : 'var(--border)',
-                              background: selectedLessonId === lesson.id ? 'var(--accent-bg)' : hasViolations ? '#FEF2F2' : 'transparent',
-                              color: 'var(--text-1)',
-                            }}
+                            className="flex-1 text-left hebrew"
+                            style={{ color: 'var(--text-1)' }}
                           >
-                            {subject?.name ?? '—'} ({lesson.hoursPerWeek}h) {hasViolations && ' ⚠'}
+                            {subject?.name ?? '—'} ({lesson.hoursPerWeek}h)
                           </button>
                           {hasViolations && (
-                            <div className="px-3 py-1 text-[10px] space-y-0.5" style={{ color: '#DC2626' }}>
-                              {violations.map((v, i) => (
-                                <p key={i}>• {v.message}</p>
-                              ))}
-                            </div>
+                            <button
+                              onMouseEnter={(e) => {
+                                setHoveredLessonId(lesson.id)
+                                setPopoverAnchor(e.currentTarget)
+                              }}
+                              onMouseLeave={() => {
+                                setHoveredLessonId(null)
+                                setPopoverAnchor(null)
+                              }}
+                              className="ml-2 flex items-center justify-center w-6 h-6 rounded"
+                              style={{
+                                background: '#FEE2E2',
+                                color: '#DC2626',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                cursor: 'help',
+                              }}
+                              title={`${violations.length} violation(s)`}
+                            >
+                              {violations.length}
+                            </button>
                           )}
                         </div>
                       )
                     })}
+
+                    {/* Violations popover */}
+                    {hoveredLessonId && popoverAnchor && violationsByLesson.get(hoveredLessonId) && violationsByLesson.get(hoveredLessonId)!.length > 0 &&
+                      createPortal(
+                        <div
+                          style={{
+                            position: 'fixed',
+                            top: popoverAnchor.getBoundingClientRect().bottom + 4,
+                            left: popoverAnchor.getBoundingClientRect().left,
+                            zIndex: 9999,
+                            maxWidth: 300,
+                            padding: '8px 12px',
+                            background: 'var(--surface)',
+                            border: '1px solid var(--border)',
+                            borderRadius: '6px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                          }}
+                          onMouseEnter={() => setHoveredLessonId(hoveredLessonId)}
+                          onMouseLeave={() => {
+                            setHoveredLessonId(null)
+                            setPopoverAnchor(null)
+                          }}
+                        >
+                          <div className="space-y-1 text-[11px]">
+                            {violationsByLesson.get(hoveredLessonId)!.map((v, i) => (
+                              <p key={i} style={{ color: 'var(--text-2)' }}>
+                                • {v.message}
+                              </p>
+                            ))}
+                          </div>
+                        </div>,
+                        document.body
+                      )
+                    }
                   </div>
                 </div>
               )}
