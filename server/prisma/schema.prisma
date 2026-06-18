@@ -172,8 +172,6 @@ model Grade {
   classes      Class[]
   lessons      Lesson[]      // MATH_GROUP / ENGLISH_GROUP lessons belong to a grade
   restrictions Restriction[]
-  // For grade 12: one day per week kept free (no lessons). Computed by scheduler based on teacher availability.
-  freeDay      Day?
 }
 
 model Class {
