@@ -12,7 +12,9 @@
 - **T3** — Roomless lessons already fully implemented (schema, UI, auto-scheduler all working).
 - **T4** — Small room capacity tiers. Added `isSmall` flag to Room + `allowSmallRoom` to Lesson. Auto-scheduler respects flags in room allocator. Migration included.
 - **T5** — Day-level toggle buttons in teacher availability modal. Click day buttons to mark/clear all slots in that day at once.
+- **T7** — Room availability in modal. RoomPopover now shows free rooms first, occupied rooms grayed out with warnings.
 - **T8** — Fixed violation count bug in StatsBar (was subtracting overridden count incorrectly).
+- **T9** — Art room reservation. Added `isArtRoom` flag to Room. Auto-scheduler respects flag in room allocator.
 
 ## ✅ Recently Completed (session 9 — 2026-05-31)
 
@@ -74,9 +76,9 @@ A read-only URL (`/teacher/{token}`) showing a teacher's own weekly timetable fr
 
 Issues found during manual testing of the scheduler and editor.
 
-**Completed in session 10:** T2 (UI) ✅, T3 (roomless lessons) ✅, T5 (day toggle) ✅, T8 (violation counts) ✅
+**Completed in session 10:** T2 ✅, T3 ✅, T4 ✅, T5 ✅, T7 ✅, T8 ✅, T9 ✅
 
-**Remaining:** T1, T4 (schema only), T6, T7, T9
+**Remaining:** T1 (needs design decision), T6 (complex UI)
 
 ### T1 — Free day for grade 12
 Grade 12 doesn't have enough lessons to fill a full week, so one day should be declared a "Free Day" — no lessons placed in it at all. Needs design: is this a restriction (`CLASS_FREE_DAY`), a config flag on the grade, or something else? If a restriction, the AS must respect it and the evaluator must enforce it. Discuss before implementing.
