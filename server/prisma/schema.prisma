@@ -144,6 +144,8 @@ model Room {
   id             String       @id @default(uuid())
   name           String       // Hebrew
   capacity       RoomCapacity @default(STANDARD)
+  // If true, this is a small room that can only be used by lessons flagged allowSmallRoom=true
+  isSmall        Boolean      @default(false)
   // Subjects that have this room as their specialized room
   specializedFor Subject[]    @relation("SpecializedSubjects")
   entries        ScheduleEntry[] @relation("EntryRoom1")
@@ -191,6 +193,9 @@ model Lesson {
   teacherId      String?
   teacher        Teacher?        @relation(fields: [teacherId], references: [id])
   hoursPerWeek   Int
+  // If true, this lesson can be placed in a small room (rooms with isSmall=true).
+  // If false, only standard/large rooms are eligible (isSmall=false).
+  allowSmallRoom Boolean        @default(false)
   // For REGULAR: one class. For SHARED/PARALLEL/MULTI_TEACHER: two classes (same grade).
   // For MATH_GROUP / ENGLISH_GROUP: both classes of the grade (students redistributed into level groups).
   classes        Class[]         @relation("ClassLessons")

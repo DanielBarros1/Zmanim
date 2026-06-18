@@ -55,6 +55,7 @@ const regularSchema = z.object({
   // Accept classIds array of exactly 1 to match the unified client API shape
   classIds: z.array(z.string().uuid()).length(1),
   hoursPerWeek: z.number().int().min(1).max(10),
+  allowSmallRoom: z.boolean().default(false),
 })
 
 const sharedSchema = z.object({
@@ -64,6 +65,7 @@ const sharedSchema = z.object({
   // Must be exactly 2 class IDs from the same grade — validated in handler
   classIds: z.array(z.string().uuid()).length(2),
   hoursPerWeek: z.number().int().min(1).max(10),
+  allowSmallRoom: z.boolean().default(false),
 })
 
 const mathGroupSchema = z.object({
@@ -74,6 +76,7 @@ const mathGroupSchema = z.object({
   hoursPerWeek: z.number().int().min(1).max(10),
   // subjectId resolved from the Math subject automatically (or passed explicitly)
   subjectId: z.string().uuid(),
+  allowSmallRoom: z.boolean().default(false),
 })
 
 const englishGroupSchema = z.object({
@@ -83,6 +86,7 @@ const englishGroupSchema = z.object({
   englishLevel: z.enum(['THREE_POINT', 'FOUR_POINT', 'FIVE_POINT']),
   hoursPerWeek: z.number().int().min(1).max(10),
   subjectId: z.string().uuid(),
+  allowSmallRoom: z.boolean().default(false),
 })
 
 // LessonTeacher entry shape (used by PARALLEL and MULTI_TEACHER)
@@ -99,6 +103,7 @@ const parallelSchema = z.object({
   hoursPerWeek: z.number().int().min(1).max(10),
   // Exactly two entries: one per class, each pairing a teacher with a class
   lessonTeachers: z.array(lessonTeacherEntrySchema).length(2),
+  allowSmallRoom: z.boolean().default(false),
 })
 
 const multiTeacherSchema = z.object({
@@ -109,6 +114,7 @@ const multiTeacherSchema = z.object({
   hoursPerWeek: z.number().int().min(1).max(10),
   // Two or more teachers (no classId — all teachers share the room)
   lessonTeachers: z.array(lessonTeacherEntrySchema).min(2),
+  allowSmallRoom: z.boolean().default(false),
 })
 
 const lessonCreateSchema = z.discriminatedUnion('type', [

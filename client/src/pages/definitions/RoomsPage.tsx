@@ -14,6 +14,7 @@ import { AppShell } from '../../components/layout/AppShell'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
+import { Checkbox } from '../../components/ui/Checkbox'
 import { Modal } from '../../components/ui/Modal'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
@@ -31,9 +32,10 @@ import type { Room } from '@zmanim/shared'
 interface FormState {
   name: string
   capacity: RoomCapacity
+  isSmall: boolean
 }
 
-const EMPTY_FORM: FormState = { name: '', capacity: RoomCapacity.STANDARD }
+const EMPTY_FORM: FormState = { name: '', capacity: RoomCapacity.STANDARD, isSmall: false }
 
 function RoomForm({
   initial,
@@ -75,6 +77,13 @@ function RoomForm({
         <option value={RoomCapacity.STANDARD}>Standard</option>
         <option value={RoomCapacity.LARGE}>Large (for shared lessons)</option>
       </Select>
+
+      <Checkbox
+        label="Small room (only for lessons flagged as allowSmallRoom)"
+        checked={form.isSmall}
+        onChange={e => setForm(p => ({ ...p, isSmall: e.target.checked }))}
+      />
+
       {error && (
         <p className="text-[12px] text-red-500 rounded-md px-3 py-2" style={{ background: 'var(--warn-bg)' }}>
           {error}
@@ -251,7 +260,7 @@ export function RoomsPage() {
       >
         {editingRoom && (
           <RoomForm
-            initial={{ name: editingRoom.name, capacity: editingRoom.capacity }}
+            initial={{ name: editingRoom.name, capacity: editingRoom.capacity, isSmall: editingRoom.isSmall }}
             onSave={handleUpdate}
             onCancel={() => { setEditingRoom(null); setEditError(undefined) }}
             loading={updateRoom.isPending}

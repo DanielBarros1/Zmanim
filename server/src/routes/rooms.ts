@@ -19,6 +19,7 @@ roomsRouter.get('/', requireAuth, async (_req, res, next) => {
 const roomSchema = z.object({
   name: z.string().min(1),
   capacity: z.enum(['STANDARD', 'LARGE']).default('STANDARD'),
+  isSmall: z.boolean().default(false),
 })
 
 roomsRouter.post('/', requireAuth, requireAdmin, async (req, res, next) => {
