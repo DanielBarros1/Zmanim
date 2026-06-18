@@ -30,6 +30,7 @@ export interface CreateRegularLesson {
   teacherId: string
   classIds: [string]
   hoursPerWeek: number
+  allowSmallRoom?: boolean
 }
 
 export interface CreateSharedLesson {
@@ -38,6 +39,7 @@ export interface CreateSharedLesson {
   teacherId: string
   classIds: [string, string]
   hoursPerWeek: number
+  allowSmallRoom?: boolean
 }
 
 export interface CreateParallelLesson {
@@ -47,6 +49,7 @@ export interface CreateParallelLesson {
   hoursPerWeek: number
   /** Exactly two entries: one per class */
   lessonTeachers: [LessonTeacherInput, LessonTeacherInput]
+  allowSmallRoom?: boolean
 }
 
 export interface CreateMathGroupLesson {
@@ -56,6 +59,7 @@ export interface CreateMathGroupLesson {
   gradeId: string
   mathLevel: MathLevel
   hoursPerWeek: number
+  allowSmallRoom?: boolean
 }
 
 export interface CreateEnglishGroupLesson {
@@ -65,6 +69,7 @@ export interface CreateEnglishGroupLesson {
   gradeId: string
   englishLevel: MathLevel
   hoursPerWeek: number
+  allowSmallRoom?: boolean
 }
 
 export interface CreateMultiTeacherLesson {
@@ -74,6 +79,7 @@ export interface CreateMultiTeacherLesson {
   hoursPerWeek: number
   /** Two or more teachers sharing one room */
   lessonTeachers: LessonTeacherInput[]
+  allowSmallRoom?: boolean
 }
 
 export type CreateLessonInput =

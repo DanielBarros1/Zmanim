@@ -148,6 +148,8 @@ export interface Lesson {
   englishLevel: MathLevel | null
   /** PARALLEL and MULTI_TEACHER: per-teacher entries (empty for other types). */
   lessonTeachers: LessonTeacherEntry[]
+  /** If true, this lesson can be placed in small rooms (isSmall=true) */
+  allowSmallRoom: boolean
 }
 
 // ─── Schedule ────────────────────────────────────────────────

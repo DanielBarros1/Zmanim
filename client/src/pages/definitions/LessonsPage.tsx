@@ -28,6 +28,7 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { Badge } from '../../components/ui/Badge'
 import { Spinner } from '../../components/ui/Spinner'
+import { Checkbox } from '../../components/ui/Checkbox'
 import {
   useLessons,
   useCreateLesson,
@@ -86,7 +87,7 @@ const FILTER_CLS =
  * pass the full required shape to the update mutation.
  */
 function lessonToInput(lesson: Lesson): CreateLessonInput {
-  const base = { subjectId: lesson.subjectId, hoursPerWeek: lesson.hoursPerWeek }
+  const base = { subjectId: lesson.subjectId, hoursPerWeek: lesson.hoursPerWeek, allowSmallRoom: lesson.allowSmallRoom }
   switch (lesson.type) {
     case LessonType.REGULAR:
       return {
@@ -181,6 +182,7 @@ interface LessonFormProps {
     mathLevel: MathLevel
     englishLevel: MathLevel
     hoursPerWeek: number
+    allowSmallRoom: boolean
     /** PARALLEL: two entries with classId; MULTI_TEACHER: entries with classId=null */
     lessonTeachers: LessonTeacherInput[]
   }>
@@ -201,6 +203,7 @@ function LessonForm({
   const [subjectId, setSubjectId] = useState(initialValues?.subjectId ?? '')
   const [teacherId, setTeacherId] = useState(initialValues?.teacherId ?? '')
   const [hoursPerWeek, setHoursPerWeek] = useState(initialValues?.hoursPerWeek ?? 2)
+  const [allowSmallRoom, setAllowSmallRoom] = useState(initialValues?.allowSmallRoom ?? false)
   // REGULAR / SHARED / PARALLEL / MULTI_TEACHER
   const [classId1, setClassId1] = useState(initialValues?.classId1 ?? '')
   const [classId2, setClassId2] = useState(initialValues?.classId2 ?? '')
@@ -251,13 +254,13 @@ function LessonForm({
 
     if (type === LessonType.REGULAR) {
       if (!classId1 || !teacherId) return
-      onSave({ type, subjectId, teacherId, classIds: [classId1], hoursPerWeek })
+      onSave({ type, subjectId, teacherId, classIds: [classId1], hoursPerWeek, allowSmallRoom })
     } else if (type === LessonType.SHARED) {
       if (!classId1 || !classId2 || !teacherId) return
       const g1 = gradeOfClass(classId1)
       const g2 = gradeOfClass(classId2)
       if (!g1 || !g2 || g1.id !== g2.id) return
-      onSave({ type, subjectId, teacherId, classIds: [classId1, classId2], hoursPerWeek })
+      onSave({ type, subjectId, teacherId, classIds: [classId1, classId2], hoursPerWeek, allowSmallRoom })
     } else if (type === LessonType.PARALLEL) {
       if (!classId1 || !classId2 || !parallelTeacher1 || !parallelTeacher2) return
       const g1 = gradeOfClass(classId1)
@@ -268,6 +271,7 @@ function LessonForm({
         subjectId,
         classIds: [classId1, classId2],
         hoursPerWeek,
+        allowSmallRoom,
         lessonTeachers: [
           { teacherId: parallelTeacher1, classId: classId1 },
           { teacherId: parallelTeacher2, classId: classId2 },
@@ -275,10 +279,10 @@ function LessonForm({
       })
     } else if (type === LessonType.MATH_GROUP) {
       if (!gradeId || !teacherId) return
-      onSave({ type, subjectId, teacherId, gradeId, mathLevel, hoursPerWeek })
+      onSave({ type, subjectId, teacherId, gradeId, mathLevel, hoursPerWeek, allowSmallRoom })
     } else if (type === LessonType.ENGLISH_GROUP) {
       if (!gradeId || !teacherId) return
-      onSave({ type, subjectId, teacherId, gradeId, englishLevel, hoursPerWeek })
+      onSave({ type, subjectId, teacherId, gradeId, englishLevel, hoursPerWeek, allowSmallRoom })
     } else if (type === LessonType.MULTI_TEACHER) {
       if (!classId1 || !classId2) return
       const valid = multiTeachers.filter(Boolean)
@@ -291,6 +295,7 @@ function LessonForm({
         subjectId,
         classIds: [classId1, classId2],
         hoursPerWeek,
+        allowSmallRoom,
         lessonTeachers: valid.map(tid => ({ teacherId: tid, classId: null })),
       })
     }
@@ -399,6 +404,12 @@ function LessonForm({
         value={hoursPerWeek}
         onChange={e => setHoursPerWeek(Number(e.target.value) || 1)}
         className="w-32"
+      />
+
+      <Checkbox
+        label="Can be placed in small rooms"
+        checked={allowSmallRoom}
+        onChange={e => setAllowSmallRoom(e.target.checked)}
       />
 
       {/* REGULAR — single class */}
