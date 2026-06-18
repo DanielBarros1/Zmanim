@@ -1124,8 +1124,10 @@ export function ScheduleEditorPage() {
         <LessonPlacementModal
           open={!!cellClickModal}
           onClose={() => setCellClickModal(null)}
+          day={cellClickModal.day}
           slot={cellClickModal.slot}
           classId={cellClickModal.classId}
+          scheduleId={scheduleId}
           lessons={lessons}
           subjects={subjects}
           entries={entries}

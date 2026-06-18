@@ -50,6 +50,59 @@ entriesRouter.get('/:id/evaluate', requireAuth, async (req, res, next) => {
   } catch (err) { next(err) }
 })
 
+// ─── Evaluate a hypothetical placement ──────────────────────────
+
+entriesRouter.post('/:id/evaluate-placement', requireAuth, async (req, res, next) => {
+  try {
+    const scheduleId = req.params.id
+    const body = z.object({
+      lessonId: z.string().uuid(),
+      day: z.enum(['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY']),
+      slot: z.number().int().min(1).max(10),
+      classId: z.string().uuid(),
+    }).parse(req.body)
+
+    const [schedule, lessons, restrictions, config] = await Promise.all([
+      prisma.schedule.findUniqueOrThrow({
+        where: { id: scheduleId },
+        include: { entries: { include: { overrides: true } } },
+      }),
+      prisma.lesson.findMany({ include: { classes: true, subject: true, grade: true, lessonTeachers: true } }),
+      prisma.restriction.findMany({ where: { isActive: true } }),
+      prisma.schoolConfig.findFirst(),
+    ])
+
+    // Create a hypothetical entry
+    const hypotheticalEntry = {
+      id: 'hypothetical',
+      scheduleId,
+      lessonId: body.lessonId,
+      day: body.day,
+      slot: body.slot,
+      roomId: null,
+      roomId2: null,
+      isSeeded: false,
+      overrides: [],
+      lesson: lessons.find(l => l.id === body.lessonId),
+    }
+
+    if (!hypotheticalEntry.lesson) {
+      return res.status(404).json({ error: 'Lesson not found' })
+    }
+
+    // Evaluate with the hypothetical entry added
+    const evalResult = evaluate({
+      entries: [...schedule.entries, hypotheticalEntry] as any,
+      lessons: lessons as any,
+      restrictions: restrictions as any,
+      config: config as any,
+      overrides: schedule.entries.flatMap(e => e.overrides) as any,
+    })
+
+    res.json(evalResult)
+  } catch (err) { next(err) }
+})
+
 // ─── Place lesson ──────────────────────────────────────────────
 
 entriesRouter.post('/:id/entries', requireAuth, requireAdmin, async (req, res, next) => {

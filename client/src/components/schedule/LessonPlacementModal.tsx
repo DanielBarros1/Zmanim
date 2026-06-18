@@ -5,15 +5,18 @@
  */
 
 import { useState } from 'react'
-import type { Lesson, ScheduleEntry, Subject } from '@zmanim/shared'
+import type { Lesson, ScheduleEntry, Subject, EvaluationResult } from '@zmanim/shared'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
+import apiClient from '../../api/client'
 
 interface LessonPlacementModalProps {
   open: boolean
   onClose: () => void
+  day: string
   slot: number
   classId: string
+  scheduleId: string
   lessons: Lesson[]
   subjects: Subject[]
   entries: ScheduleEntry[]
@@ -24,8 +27,10 @@ interface LessonPlacementModalProps {
 export function LessonPlacementModal({
   open,
   onClose,
+  day,
   slot,
   classId,
+  scheduleId,
   lessons,
   subjects,
   entries,
@@ -33,6 +38,7 @@ export function LessonPlacementModal({
   loading,
 }: LessonPlacementModalProps) {
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null)
+  const [previewViolations, setPreviewViolations] = useState<EvaluationResult['violations'] | null>(null)
 
   if (!open) return null
 
@@ -50,10 +56,26 @@ export function LessonPlacementModal({
   // (In a future version, we could run the evaluator for each placement to predict violations)
   const eligibleLessons: Lesson[] = availableLessons
 
+  const handleSelectLesson = async (lessonId: string) => {
+    setSelectedLessonId(lessonId)
+    try {
+      // Evaluate what violations would occur if we place this lesson
+      const res = await apiClient.post<EvaluationResult>(
+        `/api/schedules/${scheduleId}/evaluate-placement`,
+        { lessonId, day, slot, classId }
+      )
+      setPreviewViolations(res.data.violations)
+    } catch (err) {
+      console.error('Failed to evaluate placement:', err)
+      setPreviewViolations(null)
+    }
+  }
+
   const handlePlace = () => {
     if (!selectedLessonId) return
     onPlace(selectedLessonId)
     setSelectedLessonId(null)
+    setPreviewViolations(null)
     onClose()
   }
 
@@ -82,7 +104,7 @@ export function LessonPlacementModal({
                       return (
                         <button
                           key={lesson.id}
-                          onClick={() => setSelectedLessonId(lesson.id)}
+                          onClick={() => handleSelectLesson(lesson.id)}
                           className="w-full text-left px-3 py-2 rounded border-2 transition-all hebrew"
                           style={{
                             borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : 'var(--border)',
@@ -101,6 +123,22 @@ export function LessonPlacementModal({
             </>
           )}
         </div>
+
+        {/* Violation preview */}
+        {selectedLessonId && previewViolations && previewViolations.length > 0 && (
+          <div className="mt-4 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+            <p className="text-[11px] font-semibold mb-2" style={{ color: '#DC2626' }}>
+              ⚠ This placement would create {previewViolations.length} violation(s):
+            </p>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {previewViolations.map((v, i) => (
+                <p key={i} className="text-[10px]" style={{ color: 'var(--text-3)' }}>
+                  • {v.message}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex justify-end gap-2 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
