@@ -106,6 +106,31 @@ export function TeacherAvailabilityModal({ open, onClose, onSave, saving, teache
     })
   }
 
+  const handleDayClick = (day: Day) => {
+    setGrid(prev => {
+      const next = { ...prev }
+      const daySlots = slots.map(s => `${day}:${s}`)
+      const allMarked = daySlots.every(k => next[k] !== undefined)
+
+      if (paintMode === null) {
+        // Eraser mode: clear all slots in the day
+        daySlots.forEach(k => delete next[k])
+      } else if (allMarked) {
+        // All marked with same tier → clear all
+        if (daySlots.every(k => next[k] === paintMode)) {
+          daySlots.forEach(k => delete next[k])
+        } else {
+          // Mixed tiers → set all to current paint mode
+          daySlots.forEach(k => { next[k] = paintMode })
+        }
+      } else {
+        // Some or none marked → set all to current paint mode
+        daySlots.forEach(k => { next[k] = paintMode })
+      }
+      return next
+    })
+  }
+
   const clearAll = () => setGrid({})
 
   const handleSave = () => {
@@ -171,6 +196,30 @@ export function TeacherAvailabilityModal({ open, onClose, onSave, saving, teache
               {TIER_CONFIG[paintMode].description}
             </p>
           )}
+        </div>
+
+        {/* ── Day toggles ── */}
+        <div className="flex gap-2 flex-wrap">
+          {workDays.map(day => {
+            const daySlots = slots.map(s => `${day}:${s}`)
+            const markedInDay = daySlots.filter(k => grid[k] !== undefined).length
+            const allMarkedInDay = markedInDay === slots.length
+            return (
+              <button
+                key={day}
+                onClick={() => handleDayClick(day)}
+                className="px-3 py-1.5 rounded-md text-[12px] font-medium border-2 transition-all"
+                style={{
+                  background: allMarkedInDay ? 'var(--accent)' : 'var(--surface)',
+                  color: allMarkedInDay ? '#fff' : 'var(--text-2)',
+                  borderColor: allMarkedInDay ? 'var(--accent)' : 'var(--border)',
+                }}
+                title={allMarkedInDay ? 'Click to clear all slots' : `Click to mark all slots as ${paintMode ? paintMode.toLowerCase().replace(/_/g, ' ') : 'erased'}`}
+              >
+                {DAY_LABEL[day]}{markedInDay > 0 ? ` (${markedInDay}/${slots.length})` : ''}
+              </button>
+            )
+          })}
         </div>
 
         {/* ── Grid ── */}
