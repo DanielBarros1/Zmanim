@@ -72,22 +72,31 @@ entriesRouter.post('/:id/evaluate-placement', requireAuth, async (req, res, next
       prisma.schoolConfig.findFirst(),
     ])
 
-    // Create a hypothetical entry
+    const lesson = lessons.find(l => l.id === body.lessonId)
+    if (!lesson) {
+      return res.status(404).json({ error: 'Lesson not found' })
+    }
+
+    // Auto-assign a room for the hypothetical entry so we can detect room conflicts
+    const assigned = await autoAssignRoom({
+      scheduleId,
+      lessonId: body.lessonId,
+      day: body.day,
+      slot: body.slot,
+    })
+
+    // Create a hypothetical entry with assigned room
     const hypotheticalEntry = {
       id: 'hypothetical',
       scheduleId,
       lessonId: body.lessonId,
       day: body.day,
       slot: body.slot,
-      roomId: null,
-      roomId2: null,
+      roomId: assigned.roomId,
+      roomId2: assigned.roomId2,
       isSeeded: false,
       overrides: [],
-      lesson: lessons.find(l => l.id === body.lessonId),
-    }
-
-    if (!hypotheticalEntry.lesson) {
-      return res.status(404).json({ error: 'Lesson not found' })
+      lesson,
     }
 
     // Evaluate with the hypothetical entry added

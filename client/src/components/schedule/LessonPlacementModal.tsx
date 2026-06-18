@@ -4,8 +4,8 @@
  * separated by eligibility (no violations vs. violations present).
  */
 
-import { useState } from 'react'
-import type { Lesson, ScheduleEntry, Subject, EvaluationResult } from '@zmanim/shared'
+import { useState, useEffect } from 'react'
+import type { Lesson, ScheduleEntry, Subject, EvaluationResult, Violation } from '@zmanim/shared'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
 import apiClient from '../../api/client'
@@ -38,7 +38,38 @@ export function LessonPlacementModal({
   loading,
 }: LessonPlacementModalProps) {
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null)
-  const [previewViolations, setPreviewViolations] = useState<EvaluationResult['violations'] | null>(null)
+  const [violationsByLesson, setViolationsByLesson] = useState<Map<string, Violation[]>>(new Map())
+
+  // Evaluate all available lessons when modal opens
+  useEffect(() => {
+    if (!open) return
+
+    const evaluateLessons = async () => {
+      const violations = new Map<string, Violation[]>()
+
+      // Filter lessons that can go in this class
+      const availableLessons = lessons.filter(l =>
+        l.classIds.includes(classId) &&
+        entries.filter(e => e.lessonId === l.id).length < l.hoursPerWeek
+      )
+
+      for (const lesson of availableLessons) {
+        try {
+          const res = await apiClient.post<EvaluationResult>(
+            `/api/schedules/${scheduleId}/evaluate-placement`,
+            { lessonId: lesson.id, day, slot, classId }
+          )
+          violations.set(lesson.id, res.data.violations)
+        } catch (err) {
+          console.error(`Failed to evaluate lesson ${lesson.id}:`, err)
+        }
+      }
+
+      setViolationsByLesson(violations)
+    }
+
+    evaluateLessons()
+  }, [open, scheduleId, day, slot, classId, lessons, entries])
 
   if (!open) return null
 
@@ -56,26 +87,10 @@ export function LessonPlacementModal({
   // (In a future version, we could run the evaluator for each placement to predict violations)
   const eligibleLessons: Lesson[] = availableLessons
 
-  const handleSelectLesson = async (lessonId: string) => {
-    setSelectedLessonId(lessonId)
-    try {
-      // Evaluate what violations would occur if we place this lesson
-      const res = await apiClient.post<EvaluationResult>(
-        `/api/schedules/${scheduleId}/evaluate-placement`,
-        { lessonId, day, slot, classId }
-      )
-      setPreviewViolations(res.data.violations)
-    } catch (err) {
-      console.error('Failed to evaluate placement:', err)
-      setPreviewViolations(null)
-    }
-  }
-
   const handlePlace = () => {
     if (!selectedLessonId) return
     onPlace(selectedLessonId)
     setSelectedLessonId(null)
-    setPreviewViolations(null)
     onClose()
   }
 
@@ -101,19 +116,29 @@ export function LessonPlacementModal({
                   <div className="space-y-1.5">
                     {eligibleLessons.map(lesson => {
                       const subject = subjectMap[lesson.subjectId]
+                      const violations = violationsByLesson.get(lesson.id) || []
+                      const hasViolations = violations.length > 0
                       return (
-                        <button
-                          key={lesson.id}
-                          onClick={() => handleSelectLesson(lesson.id)}
-                          className="w-full text-left px-3 py-2 rounded border-2 transition-all hebrew"
-                          style={{
-                            borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : 'var(--border)',
-                            background: selectedLessonId === lesson.id ? 'var(--accent-bg)' : 'transparent',
-                            color: 'var(--text-1)',
-                          }}
-                        >
-                          {subject?.name ?? '—'} ({lesson.hoursPerWeek}h)
-                        </button>
+                        <div key={lesson.id} className="space-y-1">
+                          <button
+                            onClick={() => setSelectedLessonId(lesson.id)}
+                            className="w-full text-left px-3 py-2 rounded border-2 transition-all hebrew"
+                            style={{
+                              borderColor: selectedLessonId === lesson.id ? 'var(--accent)' : hasViolations ? '#FCA5A5' : 'var(--border)',
+                              background: selectedLessonId === lesson.id ? 'var(--accent-bg)' : hasViolations ? '#FEF2F2' : 'transparent',
+                              color: 'var(--text-1)',
+                            }}
+                          >
+                            {subject?.name ?? '—'} ({lesson.hoursPerWeek}h) {hasViolations && ' ⚠'}
+                          </button>
+                          {hasViolations && (
+                            <div className="px-3 py-1 text-[10px] space-y-0.5" style={{ color: '#DC2626' }}>
+                              {violations.map((v, i) => (
+                                <p key={i}>• {v.message}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       )
                     })}
                   </div>
@@ -123,22 +148,6 @@ export function LessonPlacementModal({
             </>
           )}
         </div>
-
-        {/* Violation preview */}
-        {selectedLessonId && previewViolations && previewViolations.length > 0 && (
-          <div className="mt-4 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
-            <p className="text-[11px] font-semibold mb-2" style={{ color: '#DC2626' }}>
-              ⚠ This placement would create {previewViolations.length} violation(s):
-            </p>
-            <div className="space-y-1 max-h-32 overflow-y-auto">
-              {previewViolations.map((v, i) => (
-                <p key={i} className="text-[10px]" style={{ color: 'var(--text-3)' }}>
-                  • {v.message}
-                </p>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Actions */}
         <div className="flex justify-end gap-2 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
