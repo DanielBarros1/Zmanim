@@ -115,7 +115,12 @@ entriesRouter.post('/:id/evaluate-placement', requireAuth, async (req, res, next
       overrides: schedule.entries.flatMap(e => e.overrides) as any,
     })
 
-    res.json(evalResult)
+    // Only return violations that involve the hypothetical entry
+    const relevantViolations = evalResult.violations.filter(v =>
+      v.affectedEntryIds.includes('hypothetical')
+    )
+
+    res.json({ ...evalResult, violations: relevantViolations })
   } catch (err) { next(err) }
 })
 
