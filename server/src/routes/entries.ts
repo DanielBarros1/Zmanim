@@ -65,7 +65,14 @@ entriesRouter.post('/:id/evaluate-placement', requireAuth, async (req, res, next
     const [schedule, lessons, restrictions, config] = await Promise.all([
       prisma.schedule.findUniqueOrThrow({
         where: { id: scheduleId },
-        include: { entries: { include: { overrides: true } } },
+        include: {
+          entries: {
+            include: {
+              overrides: true,
+              lesson: { include: { classes: true, subject: true, grade: true, lessonTeachers: true } }
+            }
+          }
+        },
       }),
       prisma.lesson.findMany({ include: { classes: true, subject: true, grade: true, lessonTeachers: true } }),
       prisma.restriction.findMany({ where: { isActive: true } }),
