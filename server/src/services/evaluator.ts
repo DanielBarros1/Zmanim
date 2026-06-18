@@ -37,6 +37,7 @@ interface EvalEntry {
     /** null for PARALLEL and MULTI_TEACHER — use lessonTeachers instead */
     teacherId: string | null
     gradeId: string | null
+    grade?: { id: string; number: number } | null
     mathLevel: string | null
     englishLevel: string | null
     classes: Array<{ id: string; gradeId: string }>
@@ -100,6 +101,9 @@ export function evaluate(input: EvalInput): EvaluationResult {
   // D7: pass the exempt subjects so configured exceptions are respected
   const exemptSubjects = new Set(config?.subjectTwicePerDayAllowed ?? [])
   violations.push(...checkNoSubjectTwicePerDay(entries, exemptSubjects))
+
+  // T1: Grade 12 free day check
+  violations.push(...checkGrade12FreeDay(entries))
 
   // ── User-configured restrictions ─────────────────────────────
   for (const r of restrictions) {
@@ -412,6 +416,44 @@ function checkNoSubjectTwicePerDay(entries: EvalEntry[], exemptSubjectIds: Set<s
   }
 
   return violations
+}
+
+/** T1: Grade 12 must have at least one completely free day (no lessons). */
+function checkGrade12FreeDay(entries: EvalEntry[]): Violation[] {
+  // Find all grade 12 classes
+  const grade12ClassIds = new Set<string>()
+  for (const e of entries) {
+    for (const cls of e.lesson.classes) {
+      // Grade 12 = gradeId with number 12
+      if (cls.gradeId && e.lesson.grade?.number === 12) {
+        grade12ClassIds.add(cls.id)
+      }
+    }
+  }
+
+  if (grade12ClassIds.size === 0) return []  // No grade 12 lessons
+
+  // Get all entries for grade 12
+  const grade12Entries = entries.filter(e =>
+    e.lesson.classes.some(c => grade12ClassIds.has(c.id))
+  )
+
+  if (grade12Entries.length === 0) return []
+
+  // Check if any day has no grade 12 lessons
+  const daysWithLessons = new Set(grade12Entries.map(e => e.day))
+  const allDays = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY']
+  const hasFreeDay = allDays.some(day => !daysWithLessons.has(day))
+
+  if (!hasFreeDay) {
+    return [hardViolation(
+      'GRADE_MUST_HAVE_FREE_DAY',
+      'Grade 12 must have at least one completely free day with no lessons',
+      grade12Entries.map(e => e.id),
+    )]
+  }
+
+  return []
 }
 
 // ─── User-configured restriction evaluators ───────────────────

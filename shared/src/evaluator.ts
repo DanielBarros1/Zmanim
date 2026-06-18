@@ -16,6 +16,7 @@ export type HardInvariantType =
   | 'SPECIALIZED_ROOM_VIOLATED'
   | 'LESSON_HOURS_EXCEEDED'
   | 'CLASS_SUBJECT_TWICE_PER_DAY'
+  | 'GRADE_MUST_HAVE_FREE_DAY'
 
 export interface Violation {
   /** null for hard invariants (no DB record) */

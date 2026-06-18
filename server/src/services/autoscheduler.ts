@@ -28,7 +28,78 @@
 
 import { prisma } from '../db'
 import { evaluate } from './evaluator'
-import { DAY_ORDER } from '@zmanim/shared'
+import { DAY_ORDER, Day } from '@zmanim/shared'
+
+// ─── Free day computation ─────────────────────────────────────
+
+/**
+ * For grade 12 (or any grade with T1 enabled), compute which day should be
+ * kept free (no lessons) by analyzing teacher availability.
+ *
+ * Strategy: pick the day with the MOST teacher unavailability conflicts.
+ * That day naturally becomes the least constrained, so freeing it causes
+ * minimal disruption when packing lessons into the remaining 4 days.
+ */
+async function computeFreeDayForGrade(
+  gradeId: string,
+  lessons: any[],
+  restrictions: any[],
+  days: string[],
+): Promise<Day | null> {
+  // Only grade 12 has a free day requirement for now
+  const grade = await prisma.grade.findUnique({ where: { id: gradeId } })
+  if (!grade || grade.number !== 12) return null
+
+  // Get all lessons for this grade
+  const gradeLessons = lessons.filter(l => l.classes.some((c: any) => c.gradeId === gradeId))
+  if (gradeLessons.length === 0) return null
+
+  // Get all teachers for these lessons
+  const teacherIds = new Set<string>()
+  for (const l of gradeLessons) {
+    if (l.teacherId) teacherIds.add(l.teacherId)
+    if (l.lessonTeachers) {
+      for (const lt of l.lessonTeachers) teacherIds.add(lt.teacherId)
+    }
+  }
+
+  // Count unavailability conflicts per day
+  // Higher score = more conflicts on that day = good candidate for free day
+  const conflictScores = new Map<string, number>()
+  for (const day of days) {
+    conflictScores.set(day, 0)
+  }
+
+  for (const r of restrictions) {
+    // Only look at teacher availability restrictions
+    if (!r.teacherId || !teacherIds.has(r.teacherId)) continue
+    if (r.tier !== 'INVARIANT' && r.tier !== 'NON_NEGOTIABLE') continue
+
+    const params = r.params as any
+    if (r.type === 'TEACHER_UNAVAILABLE_DAY' && params.day) {
+      conflictScores.set(params.day, (conflictScores.get(params.day) ?? 0) + 2)
+    } else if (r.type === 'TEACHER_UNAVAILABLE_DAY_SLOT' && params.day) {
+      conflictScores.set(params.day, (conflictScores.get(params.day) ?? 0) + 1)
+    }
+  }
+
+  // Pick the day with highest conflict score (fewest available teachers = safest to free)
+  let bestDay: Day | null = null
+  let bestScore = -1
+  for (const [day, score] of conflictScores) {
+    if (score > bestScore) {
+      bestScore = score
+      bestDay = day as Day
+    }
+  }
+
+  // If all days have equal score (no conflicts), pick the last day (usually Thursday)
+  if (bestDay === null && days.length > 0) {
+    bestDay = days[days.length - 1] as Day
+  }
+
+  return bestDay
+}
 
 // ─── Job tracking (in-memory) ─────────────────────────────────
 
@@ -302,6 +373,19 @@ async function runJob(input: JobInput): Promise<void> {
     function isSeededOnlyViolation(v: any, seededIds: Set<string>): boolean {
       const ids = v.affectedEntryIds as string[]
       return ids.length > 0 && ids.every((id: string) => seededIds.has(id))
+    }
+
+    // ── T1: Compute free day for grade 12 ──────────────────────────
+    // For grade 12, one day per week should be kept free (no lessons).
+    // Compute which day is best based on teacher availability.
+    patchJob(input.jobId, { statusMessage: 'Computing optimal free day for grade 12…' })
+    const grade12 = lessons.find((l: any) => l.grade?.number === 12)?.grade
+    let grade12FreeDay: Day | null = null
+    if (grade12) {
+      grade12FreeDay = await computeFreeDayForGrade(grade12.id, lessons, restrictions, days)
+      if (grade12FreeDay) {
+        console.log(`[AutoScheduler] Grade 12 free day: ${grade12FreeDay}`)
+      }
     }
 
     // Backtracking diagnostics — used to build an informative error if all restarts fail.
@@ -694,7 +778,7 @@ async function runJob(input: JobInput): Promise<void> {
       const shuffledRemaining = fisherYates([...remaining])
       patchJob(input.jobId, { statusMessage: `Restart ${restart + 1}/${input.nRestarts} — backtracking (${remaining.length} lessons)…` })
       const deadline = Date.now() + BACKTRACK_TIMEOUT_MS
-      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart, hardTeacherAvail, softLookup)
+      const btResult = backtrackPhaseB(shuffledRemaining, initOcc, allSlots, deadline, restart, hardTeacherAvail, softLookup, grade12FreeDay)
 
       if (!btResult.ok) {
         const reason = btResult.timedOut ? 'timed out' : 'proved infeasible'
@@ -1533,6 +1617,7 @@ type BtResult =
  * @param allSlots   Every (day, slot) pair in the school config.
  * @param deadline   Epoch ms; solver returns timedOut when exceeded.
  * @param restart    Restart index — used only for deterministic entry IDs.
+ * @param grade12FreeDay  If set, exclude this day from grade 12 class placements.
  */
 function backtrackPhaseB(
   instances: any[],
@@ -1542,16 +1627,22 @@ function backtrackPhaseB(
   restart: number,
   hardAvail: Map<string, HardAvail>,
   softLookup: SoftLookup,
+  grade12FreeDay?: Day | null,
 ): BtResult {
   // Pre-compute teacher IDs once per instance.
   const order = instances.map(inst => ({
     inst,
     tids: lessonTeacherIds(inst.lesson),
     validCount: 0,
+    isGrade12: inst.lesson.classes.some((c: any) => c.gradeId === inst.lesson.grade?.id && inst.lesson.grade?.number === 12),
   }))
   // Compute valid-slot counts against initOcc for MRV ordering.
   for (const item of order) {
-    item.validCount = btCountValid(item.inst, initOcc, allSlots, item.tids, hardAvail)
+    // For grade 12 lessons, filter out the free day
+    const slotsForThisLesson = grade12FreeDay && item.isGrade12
+      ? allSlots.filter(s => s.day !== grade12FreeDay)
+      : allSlots
+    item.validCount = btCountValid(item.inst, initOcc, slotsForThisLesson, item.tids, hardAvail)
   }
   // MRV: fewest valid slots first.  Equal-count ties preserve the caller's
   // shuffle order, giving different exploration paths across restarts.
@@ -1579,11 +1670,15 @@ function backtrackPhaseB(
   //   instances naturally spread across different slots rather than all
   //   rushing toward the same day-1 slot-1.  Restart diversity is maintained
   //   because Fisher-Yates produces a different shuffle every call.
-  const instanceSlotOrders = order.map(({ tids }) => {
+  const instanceSlotOrders = order.map(({ tids, isGrade12 }) => {
     const t0: Array<{ day: string; slot: number }> = []
     const t1: Array<{ day: string; slot: number }> = []
     const t2: Array<{ day: string; slot: number }> = []
-    for (const s of allSlots) {
+    // For grade 12 lessons, exclude the free day
+    const slotsToConsider = grade12FreeDay && isGrade12
+      ? allSlots.filter(s => s.day !== grade12FreeDay)
+      : allSlots
+    for (const s of slotsToConsider) {
       const p = slotSoftPenalty(tids, s.day, s.slot, softLookup)
       if      (p === 0)  t0.push(s)
       else if (p < 100)  t1.push(s)
