@@ -8,6 +8,11 @@
 ## ✅ Recently Completed (session 10 — 2026-06-18)
 
 - **XLSX Exporter** — `GET /api/schedules/:id/export/xlsx`. Exports schedule as Excel workbook with one sheet per grade (rows = day×slot, columns = class A/B). Client-side button on HomePage schedule cards. Uses xlsx library.
+- **T2** — Day labels visibility improved. Active day tab now shows accent color background + larger font + border emphasis.
+- **T3** — Roomless lessons already fully implemented (schema, UI, auto-scheduler all working).
+- **T4** — Small room capacity tiers. Added `isSmall` flag to Room + `allowSmallRoom` to Lesson. Auto-scheduler respects flags in room allocator. Migration included.
+- **T5** — Day-level toggle buttons in teacher availability modal. Click day buttons to mark/clear all slots in that day at once.
+- **T8** — Fixed violation count bug in StatsBar (was subtracting overridden count incorrectly).
 
 ## ✅ Recently Completed (session 9 — 2026-05-31)
 
@@ -65,9 +70,13 @@ A read-only URL (`/teacher/{token}`) showing a teacher's own weekly timetable fr
 
 ---
 
-## 🧪 Testing Backlog (2026-06-17)
+## 🧪 Testing Backlog (2026-06-18)
 
 Issues found during manual testing of the scheduler and editor.
+
+**Completed in session 10:** T2 (UI) ✅, T3 (roomless lessons) ✅, T5 (day toggle) ✅, T8 (violation counts) ✅
+
+**Remaining:** T1, T4 (schema only), T6, T7, T9
 
 ### T1 — Free day for grade 12
 Grade 12 doesn't have enough lessons to fill a full week, so one day should be declared a "Free Day" — no lessons placed in it at all. Needs design: is this a restriction (`CLASS_FREE_DAY`), a config flag on the grade, or something else? If a restriction, the AS must respect it and the evaluator must enforce it. Discuss before implementing.
