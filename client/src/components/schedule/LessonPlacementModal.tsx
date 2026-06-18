@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react'
-import type { Lesson, ScheduleEntry, EvaluationResult, Subject } from '@zmanim/shared'
+import type { Lesson, ScheduleEntry, Subject } from '@zmanim/shared'
 import { Modal } from '../ui/Modal'
 import { Button } from '../ui/Button'
 
@@ -17,7 +17,6 @@ interface LessonPlacementModalProps {
   lessons: Lesson[]
   subjects: Subject[]
   entries: ScheduleEntry[]
-  evaluation: EvaluationResult | null
   onPlace: (lessonId: string, overrides?: string[]) => void
   loading?: boolean
 }
@@ -30,7 +29,6 @@ export function LessonPlacementModal({
   lessons,
   subjects,
   entries,
-  evaluation,
   onPlace,
   loading,
 }: LessonPlacementModalProps) {
@@ -48,28 +46,9 @@ export function LessonPlacementModal({
     entries.filter(e => e.lessonId === l.id).length < l.hoursPerWeek
   )
 
-  // Categorize by whether they would create violations
-  const eligibleLessons: Lesson[] = []
-  const ineligibleLessons: Map<Lesson, string[]> = new Map()
-
-  for (const lesson of availableLessons) {
-    if (!evaluation) {
-      eligibleLessons.push(lesson)
-      continue
-    }
-
-    // Check if placing this lesson would create violations
-    // (This is a simplified check - in reality we'd run the evaluator)
-    const relevantViolations = evaluation.violations
-      .filter(v => !v.isOverridden && v.affectedEntryIds.length > 0)
-      .map(v => v.message)
-
-    if (relevantViolations.length === 0) {
-      eligibleLessons.push(lesson)
-    } else {
-      ineligibleLessons.set(lesson, relevantViolations)
-    }
-  }
+  // For now, all available lessons are shown as eligible
+  // (In a future version, we could run the evaluator for each placement to predict violations)
+  const eligibleLessons: Lesson[] = availableLessons
 
   const handlePlace = () => {
     if (!selectedLessonId) return
@@ -91,11 +70,11 @@ export function LessonPlacementModal({
             <p>No lessons available for placement in this class.</p>
           ) : (
             <>
-              {/* Eligible lessons */}
+              {/* Available lessons */}
               {eligibleLessons.length > 0 && (
                 <div className="space-y-2">
                   <p className="font-semibold" style={{ color: 'var(--text-2)' }}>
-                    ✓ Can place without violations:
+                    Available lessons:
                   </p>
                   <div className="space-y-1.5">
                     {eligibleLessons.map(lesson => {
@@ -119,36 +98,6 @@ export function LessonPlacementModal({
                 </div>
               )}
 
-              {/* Ineligible lessons */}
-              {ineligibleLessons.size > 0 && (
-                <div className="space-y-2 mt-4 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
-                  <p className="font-semibold" style={{ color: 'var(--text-2)' }}>
-                    ⚠ Would create violations:
-                  </p>
-                  <div className="space-y-2">
-                    {Array.from(ineligibleLessons.entries()).map(([lesson, violations]) => {
-                      const subject = subjectMap[lesson.subjectId]
-                      return (
-                        <div
-                          key={lesson.id}
-                          className="px-3 py-2 rounded border-2 hebrew"
-                          style={{
-                            borderColor: '#FCA5A5',
-                            background: '#FEF2F2',
-                            color: 'var(--text-3)',
-                            opacity: 0.7,
-                          }}
-                        >
-                          <p className="font-medium">{subject?.name ?? '—'}</p>
-                          <p className="text-[11px] mt-1">
-                            {violations.join(', ')}
-                          </p>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>

@@ -1129,7 +1129,6 @@ export function ScheduleEditorPage() {
           lessons={lessons}
           subjects={subjects}
           entries={entries}
-          evaluation={evaluation}
           onPlace={handlePlaceLessonFromModal}
           loading={placeEntry.isPending}
         />
